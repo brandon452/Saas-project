@@ -1,0 +1,15 @@
+{
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:web\" \"npm run dev:api\"",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "dev:api": "apps\\api\\.venv\\Scripts\\python.exe apps\\api\\manage.py runserver 8000",
+    "api:migrate": "apps\\api\\.venv\\Scripts\\python.exe apps\\api\\manage.py migrate",
+    "api:createsuperuser": "apps\\api\\.venv\\Scripts\\python.exe apps\\api\\manage.py createsuperuser",
+    "lint": "concurrently \"npm run lint --workspace=apps/web\" \"apps\\api\\.venv\\Scripts\\python.exe -m ruff check apps/api\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
