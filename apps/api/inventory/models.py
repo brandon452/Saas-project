@@ -13,6 +13,7 @@ class Item(TenantModel):
     name = models.CharField(max_length=255)
     sku = models.CharField(max_length=100)
     is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         unique_together = [("organization", "sku")]

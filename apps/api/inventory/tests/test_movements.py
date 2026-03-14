@@ -52,6 +52,13 @@ class StockMovementServiceTests(TransactionTestCase):
 
     def test_audit_metadata_persistence(self):
         occurred_at = timezone.now() - timezone.timedelta(days=1)
+        record_stock_movement(
+            self.org,
+            self.branch,
+            self.item,
+            Decimal("2.0000"),
+            "RECEIPT",
+        )
         ledger, created = record_stock_movement(
             self.org,
             self.branch,
@@ -253,7 +260,7 @@ class StockMovementApiTests(APITestCase):
         )
 
     def _url(self):
-        return "/api/inventory/movements/"
+        return f"/api/orgs/{self.org.id}/inventory/movements/"
 
     def test_validation_takes_priority_over_idempotency(self):
         self.client.force_authenticate(self.user)
@@ -303,7 +310,8 @@ class StockMovementApiTests(APITestCase):
             HTTP_X_BRANCH_ID=str(self.branch.id),
         )
         self.assertEqual(res.status_code, 201)
-        self.assertEqual(res.data["performed_by"], self.user.id)
+        self.assertEqual(res.data["performed_by"]["id"], self.user.id)
+        self.assertEqual(res.data["performed_by"]["username"], self.user.username)
 
     def test_deduplicated_request_returns_200(self):
         self.client.force_authenticate(self.user)

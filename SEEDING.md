@@ -119,6 +119,12 @@ Ensure `C:\Windows\System32\drivers\etc\hosts` includes:
 ```
 
 ## 6. Start App
+Before starting the web app, make sure the browser-facing API base uses `localhost`:
+
+```powershell
+Set-Content apps\web\.env.local "NEXT_PUBLIC_API_URL=http://localhost:8000"
+```
+
 ```powershell
 npm run dev
 ```
@@ -132,3 +138,15 @@ Invoke-WebRequest http://localhost:8000/api/health/ -Headers @{ Host = "acme.loc
 Expected:
 - localhost -> `organization: null`
 - acme subdomain -> `organization: "acme"`
+
+## 8. Local Login Note
+If login succeeds and then immediately bounces back to `/login`, the usual cause is a host mismatch between `localhost` and `127.0.0.1`.
+
+Use:
+
+```text
+Frontend: http://localhost:3000
+API:      http://localhost:8000
+```
+
+Do not set `NEXT_PUBLIC_API_URL` to `http://127.0.0.1:8000` for browser-based local dev.

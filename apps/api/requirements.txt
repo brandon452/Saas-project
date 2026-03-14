@@ -1,10 +1,13 @@
-﻿Django==5.1.6
+Django==5.2.12
 djangorestframework==3.15.2
 djangorestframework-simplejwt==5.4.0
+django-ratelimit==4.1.0
 drf-spectacular==0.28.0
 django-cors-headers==4.6.0
 python-dotenv==1.0.1
 psycopg[binary]==3.2.13
-whitenoise==6.8.2
+redis==5.2.1
+whitenoise[brotli]==6.8.2
 ruff==0.9.7
+
 

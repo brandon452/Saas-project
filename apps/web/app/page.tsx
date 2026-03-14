@@ -1,26 +1,33 @@
-﻿import { headers } from "next/headers"
+"use client"
 
-import { apiRequest } from "../lib/api-client"
-import { ClientHealthCard } from "./ui/client-health-card"
+import { useEffect } from "react"
+import { useRouter } from "next/navigation"
 
-export default async function Page() {
-  const host = headers().get("host") ?? "localhost:3000"
+import { useAccessibleOrgs } from "@/lib/hooks/useAccessibleOrgs"
+import { useAuth } from "@/lib/hooks/useAuth"
 
-  let serverHealth: unknown = { detail: "Unavailable" }
-  try {
-    const response = await apiRequest("/api/health/")
-    serverHealth = await response.json()
-  } catch {
-    serverHealth = { detail: "Health API unreachable" }
-  }
+export default function RootPage() {
+  const router = useRouter()
+  const { user, isLoading } = useAuth()
+  const { data: orgs = [], isLoading: orgsLoading } = useAccessibleOrgs(!!user)
 
-  return (
-    <main style={{ fontFamily: "system-ui, sans-serif", padding: "2rem" }}>
-      <h1>Inventory Dashboard</h1>
-      <p>Host: {host}</p>
-      <h2>Server Component Health</h2>
-      <pre>{JSON.stringify(serverHealth, null, 2)}</pre>
-      <ClientHealthCard />
-    </main>
-  )
+  useEffect(() => {
+    if (isLoading) return
+
+    if (!user) {
+      router.replace("/login")
+      return
+    }
+
+    if (orgsLoading) return
+
+    if (orgs.length > 0) {
+      router.replace(`/orgs/${orgs[0].id}/dashboard`)
+      return
+    }
+
+    router.replace("/login")
+  }, [user, isLoading, orgs, orgsLoading, router])
+
+  return null
 }

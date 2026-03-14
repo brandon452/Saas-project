@@ -8,3 +8,10 @@ class BranchSerializer(serializers.ModelSerializer):
         model = Branch
         fields = ["id", "name", "code", "organization"]
         read_only_fields = ["organization"]
+
+
+class NetworkBranchSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    org_id = serializers.UUIDField(source="organization_id")
+    org_name = serializers.CharField(source="organization.name")

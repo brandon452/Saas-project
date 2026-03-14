@@ -26,3 +26,16 @@ class TenantManager(Manager):
 
     def for_org(self, org):
         return TenantQuerySet(self.model, using=self._db).filter(organization=org)
+
+
+class OrganizationMemberQuerySet(QuerySet):
+    def for_org(self, org):
+        return self.filter(organization=org)
+
+
+class OrganizationMemberManager(Manager):
+    def get_queryset(self):
+        return OrganizationMemberQuerySet(self.model, using=self._db)
+
+    def for_org(self, org):
+        return self.get_queryset().for_org(org)

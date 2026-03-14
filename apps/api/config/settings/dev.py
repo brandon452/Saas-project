@@ -1,10 +1,43 @@
 from .base import *  # noqa: F403
+import sys
 
 DEBUG = True
-ALLOWED_HOSTS = ["localhost", "127.0.0.1", ".localhost", "*"]
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("DB_NAME", "inventory_main"),
+        "USER": os.getenv("DB_USER", "inventory_user"),
+        "PASSWORD": os.getenv("DB_PASSWORD", "admin"),
+        "HOST": os.getenv("DB_HOST", "127.0.0.1"),
+        "PORT": os.getenv("DB_PORT", "5432"),
+    }
+}
 
-CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^http://[a-z0-9-]+\.localhost:3000$",
-    r"^http://localhost:3000$",
-    r"^http://127\.0\.0\.1:3000$",
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", ".localhost", "testserver", "random.host"]
+SECURE_SSL_REDIRECT = False
+SESSION_COOKIE_SECURE = False
+CSRF_COOKIE_SECURE = False
+AUTH_COOKIE_SECURE = False
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
+CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+# Local development: do not require Redis for auth rate limiting.
+CACHES = {
+    "default": {
+        "BACKEND": (
+            "django.core.cache.backends.locmem.LocMemCache"
+            if "test" in sys.argv
+            else "django.core.cache.backends.dummy.DummyCache"
+        ),
+    }
+}
+RATELIMIT_USE_CACHE = "default"

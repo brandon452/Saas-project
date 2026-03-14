@@ -1,10 +1,52 @@
-﻿html,
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #f7f8f4;
+  --color-foreground: #162014;
+  --color-card: #ffffff;
+  --color-card-foreground: #162014;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #162014;
+  --color-primary: #1d4d3f;
+  --color-primary-foreground: #f7fbf8;
+  --color-secondary: #dde7dd;
+  --color-secondary-foreground: #162014;
+  --color-muted: #edf2eb;
+  --color-muted-foreground: #5a6857;
+  --color-accent: #e5efe4;
+  --color-accent-foreground: #162014;
+  --color-border: #d4dfd3;
+  --color-input: #d4dfd3;
+  --color-ring: #1d4d3f;
+  --color-sidebar: #eef3ec;
+  --color-sidebar-foreground: #162014;
+  --color-sidebar-primary: #1d4d3f;
+  --color-sidebar-primary-foreground: #f7fbf8;
+  --color-sidebar-accent: #dde7dd;
+  --color-sidebar-accent-foreground: #162014;
+  --color-sidebar-border: #d4dfd3;
+  --color-sidebar-ring: #1d4d3f;
+}
+
+html,
 body {
   margin: 0;
   padding: 0;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top, rgba(29, 77, 63, 0.08), transparent 30%),
+    linear-gradient(180deg, #fbfcf9 0%, #f2f6ef 100%);
+  color: var(--color-foreground);
 }
 
 * {
   box-sizing: border-box;
 }
 
+button,
+input {
+  font: inherit;
+}

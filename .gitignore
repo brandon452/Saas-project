@@ -7,4 +7,5 @@ apps/api/__pycache__/
 apps/api/**/*.pyc
 apps/api/.env
 .env
+apps/web/.env.local
 

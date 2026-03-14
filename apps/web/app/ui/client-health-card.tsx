@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 
-import { apiRequest } from "../../lib/api-client"
+import { apiRequest } from "../../lib/api"
 
 export function ClientHealthCard() {
   const [result, setResult] = useState<Record<string, unknown> | null>(null)
@@ -11,8 +11,7 @@ export function ClientHealthCard() {
   async function loadHealth() {
     setLoading(true)
     try {
-      const response = await apiRequest("/api/health/")
-      const data = (await response.json()) as Record<string, unknown>
+      const data = await apiRequest<Record<string, unknown>>("health/")
       setResult(data)
     } catch {
       setResult({ detail: "Health API unreachable" })

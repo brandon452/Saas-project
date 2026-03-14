@@ -9,6 +9,12 @@
   - `127.0.0.1 globex.localhost`
 
 ## Run the App
+Before starting the web app, make sure the browser-facing API base uses `localhost`:
+
+```powershell
+Set-Content apps\web\.env.local "NEXT_PUBLIC_API_URL=http://localhost:8000"
+```
+
 From repo root:
 
 ```powershell
@@ -21,6 +27,8 @@ Or separately:
 npm run dev:web
 npm run dev:api
 ```
+
+If you change `.env.local`, restart the Next dev server before testing login.
 
 ## Smoke Checks
 ```powershell
