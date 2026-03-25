@@ -14,7 +14,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import type { BranchTransfer, ReceiveTransferPayload } from "@/lib/types/branch-transfers"
+import type {
+  BranchTransfer,
+  BranchTransferItem,
+  ReceiveTransferPayload,
+} from "@/lib/types/branch-transfers"
 
 interface ReceiveTransferFormProps {
   transfer: BranchTransfer
@@ -25,14 +29,9 @@ interface ReceiveTransferFormProps {
 
 interface ReceiveLineDraft {
   line_id: number
-  item: string
+  item: BranchTransferItem
   quantity_sent: number
   quantity_received: number
-}
-
-function truncateUuid(value: string | null | undefined) {
-  if (!value) return "\u2014"
-  return `${value.slice(0, 8)}...`
 }
 
 export function ReceiveTransferForm({
@@ -104,7 +103,7 @@ export function ReceiveTransferForm({
 
             return (
               <TableRow key={line.line_id}>
-                <TableCell className="font-mono text-sm">{truncateUuid(line.item)}</TableCell>
+                <TableCell>{line.item.name}</TableCell>
                 <TableCell>{line.quantity_sent}</TableCell>
                 <TableCell className="space-y-2">
                   <Input

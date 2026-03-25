@@ -13,19 +13,19 @@ export function usePOMutations(orgId: string) {
     queryClient.invalidateQueries({ queryKey: ["purchase-orders", orgId] })
   }
 
-  function invalidateDetail(poId: number) {
+  function invalidateDetail(poId: string) {
     queryClient.invalidateQueries({
-      queryKey: ["purchase-orders", orgId, String(poId)],
+      queryKey: ["purchase-orders", orgId, poId],
     })
   }
 
-  function invalidateBoth(poId: number) {
+  function invalidateBoth(poId: string) {
     invalidateList()
     invalidateDetail(poId)
   }
 
   const createPO = useMutation({
-    mutationFn: (data: { supplier: number; branch: number; notes?: string }) =>
+    mutationFn: (data: { supplier: string; branch: string; notes?: string }) =>
       apiRequest<PurchaseOrder>(`orgs/${orgId}/purchase-orders/`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getCsrfHeader() },
@@ -35,7 +35,7 @@ export function usePOMutations(orgId: string) {
   })
 
   const submitPO = useMutation({
-    mutationFn: (poId: number) =>
+    mutationFn: (poId: string) =>
       apiRequest<PurchaseOrder>(`orgs/${orgId}/purchase-orders/${poId}/submit/`, {
         method: "POST",
         headers: getCsrfHeader(),
@@ -44,7 +44,7 @@ export function usePOMutations(orgId: string) {
   })
 
   const cancelPO = useMutation({
-    mutationFn: (poId: number) =>
+    mutationFn: (poId: string) =>
       apiRequest<PurchaseOrder>(`orgs/${orgId}/purchase-orders/${poId}/cancel/`, {
         method: "POST",
         headers: getCsrfHeader(),
@@ -57,8 +57,8 @@ export function usePOMutations(orgId: string) {
       poId,
       data,
     }: {
-      poId: number
-      data: { item: number; ordered_quantity: number; unit_price: string }
+      poId: string
+      data: { item: string; ordered_quantity: number; unit_price: string }
     }) =>
       apiRequest<POLine>(`orgs/${orgId}/purchase-orders/${poId}/lines/add/`, {
         method: "POST",
@@ -74,7 +74,7 @@ export function usePOMutations(orgId: string) {
       lineId,
       data,
     }: {
-      poId: number
+      poId: string
       lineId: number
       data: Partial<{ ordered_quantity: number; unit_price: string }>
     }) =>
@@ -87,7 +87,7 @@ export function usePOMutations(orgId: string) {
   })
 
   const removeLine = useMutation({
-    mutationFn: ({ poId, lineId }: { poId: number; lineId: number }) =>
+    mutationFn: ({ poId, lineId }: { poId: string; lineId: number }) =>
       apiRequest(`orgs/${orgId}/purchase-orders/${poId}/lines/${lineId}/remove/`, {
         method: "DELETE",
         headers: getCsrfHeader(),

@@ -177,12 +177,14 @@ export function SidebarMenuButton({
   asChild,
   isActive,
   className,
+  onClick,
 }: {
   children: React.ReactNode
   asChild?: boolean
   isActive?: boolean
   tooltip?: string
   className?: string
+  onClick?: React.MouseEventHandler<HTMLButtonElement>
 }) {
   const { collapsed } = useSidebarContext()
   const classes = cn(
@@ -199,7 +201,7 @@ export function SidebarMenuButton({
     })
   }
 
-  return <button className={classes}>{children}</button>
+  return <button className={classes} onClick={onClick}>{children}</button>
 }
 
 export function SidebarSeparator() {

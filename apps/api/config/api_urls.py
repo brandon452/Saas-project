@@ -7,17 +7,29 @@ from branches.views import BranchViewSet, NetworkBranchView
 from config.views import HealthView
 from branch_transfers.views import BranchTransferViewSet
 from goods_receipts.views import GoodsReceiptViewSet
-from inventory.views import ItemViewSet, StockMovementViewSet, StockOnHandViewSet
+from inventory.views import (
+    BranchItemCatalogView,
+    BranchItemViewSet,
+    MasterItemViewSet,
+    OrgItemViewSet,
+    OrgMasterItemView,
+    StockMovementViewSet,
+    StockOnHandViewSet,
+    StockTakeViewSet,
+)
 from purchase_orders.views import PurchaseOrderViewSet
+from reports.views import PurchaseCostTrendView, StockValuationView
 from suppliers.views import SupplierViewSet
 from tenancy.org_views import OrgGovernanceView, OrgListCreateView
 from tenancy.parent_views import ParentMemberViewSet
-from tenancy.views import MemberViewSet
+from tenancy.views import MemberSearchView, MemberViewSet
 
 org_router = DefaultRouter()
-org_router.register("inventory/items", ItemViewSet, basename="item")
+org_router.register("inventory/items", OrgItemViewSet, basename="item")
+org_router.register("branch-items", BranchItemViewSet, basename="branch-item")
 org_router.register("inventory/stock", StockOnHandViewSet, basename="stock")
 org_router.register("inventory/movements", StockMovementViewSet, basename="movement")
+org_router.register("stock-takes", StockTakeViewSet, basename="stock-take")
 org_router.register("branches", BranchViewSet, basename="branch")
 org_router.register("members", MemberViewSet, basename="member")
 org_router.register("suppliers", SupplierViewSet, basename="supplier")
@@ -27,6 +39,7 @@ org_router.register("branch-transfers", BranchTransferViewSet, basename="branch-
 
 parent_router = DefaultRouter()
 parent_router.register("members", ParentMemberViewSet, basename="parent-member")
+parent_router.register("master-items", MasterItemViewSet, basename="master-item")
 
 urlpatterns = [
     path("health/", HealthView.as_view(), name="health"),
@@ -35,6 +48,23 @@ urlpatterns = [
     path("orgs/", OrgListCreateView.as_view(), name="org-list"),
     path("orgs/<uuid:org_id>/governance/", OrgGovernanceView.as_view(), name="org-governance"),
     path("orgs/<uuid:org_id>/network-branches/", NetworkBranchView.as_view(), name="network-branches"),
+    path("orgs/<uuid:org_id>/master-items/", OrgMasterItemView.as_view(), name="org-master-items"),
+    path("orgs/<uuid:org_id>/members/search/", MemberSearchView.as_view(), name="member-search"),
+    path(
+        "orgs/<uuid:org_id>/reports/purchase-cost-trend/",
+        PurchaseCostTrendView.as_view(),
+        name="purchase-cost-trend",
+    ),
+    path(
+        "orgs/<uuid:org_id>/reports/stock-valuation/",
+        StockValuationView.as_view(),
+        name="stock-valuation",
+    ),
+    path(
+        "orgs/<uuid:org_id>/branch-items/catalog/",
+        BranchItemCatalogView.as_view(),
+        name="branch-items-catalog",
+    ),
     path("orgs/<uuid:org_id>/", include(org_router.urls)),
     path("parent/", include(parent_router.urls)),
     path("schema/", SpectacularAPIView.as_view(), name="schema"),

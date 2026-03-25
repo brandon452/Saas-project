@@ -5,41 +5,56 @@ export type POStatus =
   | "FULLY_RECEIVED"
   | "CANCELLED"
 
+export interface POLineItem {
+  id: string
+  name: string
+  sku: string
+}
+
 export interface POLine {
   id: number
-  item: number
+  item: POLineItem
   ordered_quantity: number
   unit_price: string
   received_quantity: number | null
 }
 
+export interface POReceiptSummary {
+  id: string
+  received_at: string
+  received_by: string | null
+  line_count: number
+  total_quantity_received: number
+}
+
 export interface PurchaseOrder {
-  id: number
+  id: string
   po_number: string
-  supplier: number
-  branch: number
+  supplier: string
+  branch: string
   status: POStatus
   notes: string
   lines: POLine[]
+  receipts: POReceiptSummary[]
   created_by: number | null
   created_at: string
   updated_at: string
 }
 
 export interface Supplier {
-  id: number
+  id: string
   name: string
   is_active: boolean
 }
 
 export interface Branch {
-  id: number
+  id: string
   name: string
   code: string
 }
 
 export interface Item {
-  id: number
+  id: string
   name: string
   sku: string
 }

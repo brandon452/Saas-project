@@ -10,12 +10,20 @@ from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import Item, StockOnHand
+from inventory.models import MasterItem, OrgItem, StockOnHand
 from inventory.services import record_stock_movement
 from tenancy.models import Organization, OrganizationMember
 
 
 class NegativeStockTestDataMixin:
+    def _create_org_item(self, organization, name, sku, *, item_name=""):
+        master_item = MasterItem.objects.create(name=name, sku=sku)
+        return OrgItem.objects.for_org(organization).create(
+            organization=organization,
+            master_item=master_item,
+            name=item_name,
+        )
+
     def setUp(self):
         User = get_user_model()
         suffix = uuid4().hex[:8]
@@ -26,11 +34,7 @@ class NegativeStockTestDataMixin:
             name="Main",
             code="MAIN",
         )
-        self.item = Item.objects.for_org(self.org).create(
-            organization=self.org,
-            name="Lavender Oil",
-            sku="NEG-001",
-        )
+        self.item = self._create_org_item(self.org, "Lavender Oil", "NEG-001")
 
     def _record(self, quantity, movement_type="ADJUSTMENT"):
         return record_stock_movement(
@@ -158,7 +162,7 @@ class NegativeStockConcurrencyTests(NegativeStockTestDataMixin, TransactionTestC
         )
 
 
-class NegativeStockApiTests(APITestCase):
+class NegativeStockApiTests(NegativeStockTestDataMixin, APITestCase):
     def setUp(self):
         User = get_user_model()
         suffix = uuid4().hex[:8]
@@ -170,11 +174,7 @@ class NegativeStockApiTests(APITestCase):
             name="Main",
             code="MAIN",
         )
-        self.item = Item.objects.for_org(self.org).create(
-            organization=self.org,
-            name="Lavender Oil",
-            sku="NEG-API-001",
-        )
+        self.item = self._create_org_item(self.org, "Lavender Oil", "NEG-API-001")
         self.client.force_authenticate(self.user)
 
     def _url(self):

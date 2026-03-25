@@ -3,7 +3,15 @@ from rest_framework import serializers
 
 from branches.models import Branch
 
-from .models import Item, StockLedger, StockOnHand
+from .models import (
+    BranchItem,
+    MasterItem,
+    OrgItem,
+    StockLedger,
+    StockOnHand,
+    StockTake,
+    StockTakeLine,
+)
 
 User = get_user_model()
 
@@ -16,10 +24,16 @@ class BranchSummarySerializer(serializers.ModelSerializer):
 
 
 class ItemSummarySerializer(serializers.ModelSerializer):
+    sku = serializers.CharField(source="master_item.sku", read_only=True)
+    name = serializers.SerializerMethodField()
+
     class Meta:
-        model = Item
+        model = OrgItem
         fields = ["id", "name", "sku"]
         read_only_fields = ["id", "name", "sku"]
+
+    def get_name(self, obj):
+        return obj.display_name
 
 
 class PerformedBySerializer(serializers.ModelSerializer):
@@ -29,11 +43,151 @@ class PerformedBySerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "username"]
 
 
-class ItemSerializer(serializers.ModelSerializer):
+class MasterItemSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Item
-        fields = ["id", "organization", "name", "sku", "is_active", "created_at"]
-        read_only_fields = ["id", "organization", "created_at"]
+        model = MasterItem
+        fields = ["id", "name", "sku", "is_active", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+
+class OrgItemSerializer(serializers.ModelSerializer):
+    sku = serializers.CharField(source="master_item.sku", read_only=True)
+    name = serializers.SerializerMethodField()
+    name_override = serializers.CharField(source="name", read_only=True)  # raw override, blank if none set
+
+
+    class Meta:
+        model = OrgItem
+        fields = [
+            "id",
+            "organization",
+            "master_item",
+            "name",          # resolved display_name — read only
+            "name_override", # raw override stored on OrgItem — blank string if no override
+            "sku",
+            "is_active",
+            "created_at",
+        ]
+        read_only_fields = ["id", "organization", "sku", "created_at", "name", "name_override"]
+
+    def get_name(self, obj):
+        return obj.display_name
+
+
+class OrgItemCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrgItem
+        fields = ["master_item", "name"]
+
+    def validate_master_item(self, value):
+        if not value.is_active:
+            raise serializers.ValidationError("Cannot activate an inactive master item.")
+        return value
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        master_item = attrs.get("master_item")
+        existing = OrgItem.objects.filter(
+            organization=request.org,
+            master_item=master_item,
+        ).first()
+        if existing and existing.is_active:
+            raise serializers.ValidationError(
+                {"master_item": "This item has already been activated for this organisation."}
+            )
+        self._existing_inactive = existing if (existing and not existing.is_active) else None
+        return attrs
+
+    def create(self, validated_data):
+        existing = getattr(self, "_existing_inactive", None)
+        if existing:
+            existing.is_active = True
+            if "name" in validated_data:
+                existing.name = validated_data["name"]
+            existing.save(update_fields=["is_active", "name"])
+            return existing
+        return OrgItem.objects.create(**validated_data)
+
+
+class OrgMasterItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MasterItem
+        fields = ["id", "name", "sku", "is_active", "created_at"]
+        read_only_fields = ["id", "name", "sku", "is_active", "created_at"]
+
+
+class BranchItemCatalogSerializer(serializers.Serializer):
+    """
+    Annotated OrgItem row for the branch catalog management page.
+
+    Returns active OrgItems for the resolved org with branch-specific
+    enablement information for the requested branch.
+    """
+
+    id = serializers.UUIDField()
+    name = serializers.SerializerMethodField()
+    sku = serializers.CharField(source="master_item.sku")
+    is_enabled = serializers.BooleanField()
+    branch_item_id = serializers.IntegerField(allow_null=True)
+
+    def get_name(self, obj):
+        return obj.display_name
+
+
+class BranchItemSerializer(serializers.ModelSerializer):
+    sku = serializers.CharField(source="org_item.master_item.sku", read_only=True)
+    name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BranchItem
+        fields = ["id", "org_item", "branch", "name", "sku", "is_active", "created_at"]
+        read_only_fields = ["id", "name", "sku", "created_at"]
+
+    def get_name(self, obj):
+        return obj.org_item.display_name
+
+
+class BranchItemCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BranchItem
+        fields = ["org_item", "branch"]
+        validators = []
+
+    def validate_org_item(self, value):
+        request = self.context["request"]
+        if value.organization != request.org:
+            raise serializers.ValidationError("Item does not belong to this organisation.")
+        if not value.is_active:
+            raise serializers.ValidationError("Cannot enable an inactive item at a branch.")
+        return value
+
+    def validate_branch(self, value):
+        request = self.context["request"]
+        if value.organization != request.org:
+            raise serializers.ValidationError("Branch does not belong to this organisation.")
+        return value
+
+    def validate(self, attrs):
+        org_item = attrs.get("org_item")
+        branch = attrs.get("branch")
+        existing = BranchItem.objects.filter(
+            org_item=org_item,
+            branch=branch,
+        ).first()
+        if existing and existing.is_active:
+            raise serializers.ValidationError(
+                {"org_item": "This item is already enabled at this branch."}
+            )
+        self._existing_inactive = existing if (existing and not existing.is_active) else None
+        return attrs
+
+    def create(self, validated_data):
+        existing = getattr(self, "_existing_inactive", None)
+        if existing:
+            existing.is_active = True
+            existing.save(update_fields=["is_active"])
+            return existing
+        return BranchItem.objects.create(**validated_data)
 
 
 class StockOnHandSerializer(serializers.ModelSerializer):
@@ -84,7 +238,7 @@ class StockLedgerSerializer(serializers.ModelSerializer):
 
 
 class StockMovementSerializer(serializers.Serializer):
-    item = serializers.PrimaryKeyRelatedField(queryset=Item.objects.none())
+    item = serializers.PrimaryKeyRelatedField(queryset=OrgItem.objects.none())
     quantity = serializers.DecimalField(max_digits=12, decimal_places=4)
     movement_type = serializers.ChoiceField(choices=["RECEIPT", "ISSUE", "ADJUSTMENT"])
     reference_type = serializers.CharField(required=False, allow_null=True, allow_blank=True, default=None)
@@ -97,7 +251,7 @@ class StockMovementSerializer(serializers.Serializer):
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
         if request and getattr(request, "org", None):
-            self.fields["item"].queryset = Item.objects.for_org(request.org)
+            self.fields["item"].queryset = OrgItem.objects.for_org(request.org)
 
     def validate(self, data):
         request = self.context["request"]
@@ -119,3 +273,161 @@ class StockMovementSerializer(serializers.Serializer):
                 )
 
         return data
+
+
+class StockTakeLineSerializer(serializers.ModelSerializer):
+    variance_preview = serializers.SerializerMethodField()
+    item_name = serializers.CharField(source="org_item.display_name", read_only=True)
+    item_sku = serializers.CharField(source="org_item.master_item.sku", read_only=True)
+
+    class Meta:
+        model = StockTakeLine
+        fields = [
+            "id",
+            "org_item",
+            "item_name",
+            "item_sku",
+            "snapshot_quantity",
+            "counted_quantity",
+            "variance_preview",
+        ]
+        read_only_fields = [
+            "id",
+            "org_item",
+            "item_name",
+            "item_sku",
+            "snapshot_quantity",
+            "variance_preview",
+        ]
+
+    def get_variance_preview(self, obj):
+        variance_preview = obj.variance_preview
+        return str(variance_preview) if variance_preview is not None else None
+
+
+class StockTakeLineUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StockTakeLine
+        fields = ["counted_quantity"]
+
+    def validate_counted_quantity(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError("counted_quantity cannot be negative.")
+        return value
+
+    def validate(self, attrs):
+        stock_take = self.instance.stock_take
+        if stock_take.status != StockTake.IN_PROGRESS:
+            raise serializers.ValidationError(
+                "Lines can only be edited while the stock take is In Progress."
+            )
+        return attrs
+
+
+class StockTakeListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StockTake
+        fields = [
+            "id",
+            "branch",
+            "status",
+            "notes",
+            "created_by",
+            "started_by",
+            "submitted_by",
+            "approved_by",
+            "cancelled_by",
+            "started_at",
+            "submitted_at",
+            "approved_at",
+            "cancelled_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "status",
+            "created_by",
+            "started_by",
+            "submitted_by",
+            "approved_by",
+            "cancelled_by",
+            "started_at",
+            "submitted_at",
+            "approved_at",
+            "cancelled_at",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class StockTakeDetailSerializer(serializers.ModelSerializer):
+    lines = StockTakeLineSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = StockTake
+        fields = [
+            "id",
+            "branch",
+            "status",
+            "notes",
+            "lines",
+            "created_by",
+            "started_by",
+            "submitted_by",
+            "approved_by",
+            "cancelled_by",
+            "started_at",
+            "submitted_at",
+            "approved_at",
+            "cancelled_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "status",
+            "lines",
+            "created_by",
+            "started_by",
+            "submitted_by",
+            "approved_by",
+            "cancelled_by",
+            "started_at",
+            "submitted_at",
+            "approved_at",
+            "cancelled_at",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class StockTakeCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StockTake
+        fields = ["branch", "notes"]
+
+    def validate_branch(self, value):
+        request = self.context["request"]
+        if value.organization != request.org:
+            raise serializers.ValidationError("Branch does not belong to this organisation.")
+        return value
+
+
+class StockTakeNotesUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StockTake
+        fields = ["notes"]
+
+    def to_internal_value(self, data):
+        extra_fields = set(data.keys()) - {"notes"}
+        if extra_fields:
+            raise serializers.ValidationError({"detail": "Only the notes field may be updated."})
+        return super().to_internal_value(data)
+
+    def validate(self, attrs):
+        if self.instance.status not in StockTake.EDITABLE_STATUSES:
+            raise serializers.ValidationError(
+                "Notes can only be edited in Draft or In Progress status."
+            )
+        return attrs

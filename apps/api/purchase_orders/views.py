@@ -33,7 +33,7 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
             PurchaseOrder.objects
             .for_org(self.request.org)
             .select_related("supplier", "branch", "created_by")
-            .prefetch_related("lines__item")
+            .prefetch_related("lines__item__master_item", "receipts__lines")
         )
 
     def get_serializer_class(self):

@@ -9,11 +9,6 @@ import {
 import { cn } from "@/lib/utils"
 import type { BranchTransfer, TransferStatus } from "@/lib/types/branch-transfers"
 
-function truncateUuid(value: string | null | undefined) {
-  if (!value) return "\u2014"
-  return `${value.slice(0, 8)}...`
-}
-
 function isReceivedStatus(status: TransferStatus) {
   return status === "RECEIVED_COMPLETE" || status === "RECEIVED_WITH_VARIANCE"
 }
@@ -38,7 +33,7 @@ export function TransferLineTable({ transfer }: { transfer: BranchTransfer }) {
 
           return (
             <TableRow key={line.id}>
-              <TableCell className="font-mono text-sm">{truncateUuid(line.item)}</TableCell>
+              <TableCell>{line.item.name}</TableCell>
               <TableCell>{line.quantity_sent}</TableCell>
               {showReceivedColumns ? <TableCell>{line.quantity_received ?? 0}</TableCell> : null}
               {showReceivedColumns ? (

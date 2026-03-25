@@ -6,7 +6,11 @@ import { apiRequest } from "@/lib/api"
 
 export interface GRPOSearchLine {
   id: string
-  item: string
+  item: {
+    id: string
+    name: string
+    sku: string
+  }
   ordered_quantity: number
   unit_price: string
   received_quantity: number

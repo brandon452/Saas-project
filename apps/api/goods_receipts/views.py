@@ -1,5 +1,8 @@
+from datetime import date, datetime, time
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
@@ -29,13 +32,48 @@ class GoodsReceiptViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
             permissions.append(RolePolicyPermission())
         return permissions
 
+    def _parse_date(self, value):
+        try:
+            return date.fromisoformat(value)
+        except (TypeError, ValueError):
+            raise DRFValidationError({"detail": "Invalid date format. Use YYYY-MM-DD."})
+
     def get_queryset(self):
-        return (
+        qs = (
             GoodsReceipt.objects
             .for_org(self.request.org)
             .select_related("purchase_order", "branch", "supplier", "received_by")
-            .prefetch_related("lines__po_line__item", "lines__item")
+            .prefetch_related("lines__po_line__item__master_item", "lines__item__master_item")
         )
+
+        receipt_type = self.request.query_params.get("receipt_type")
+        if receipt_type:
+            qs = qs.filter(receipt_type=receipt_type)
+
+        branch = self.request.query_params.get("branch")
+        if branch:
+            qs = qs.filter(branch=branch)
+
+        supplier = self.request.query_params.get("supplier")
+        if supplier:
+            qs = qs.filter(supplier=supplier)
+
+        date_after_param = self.request.query_params.get("date_after")
+        date_before_param = self.request.query_params.get("date_before")
+
+        date_after = self._parse_date(date_after_param) if date_after_param else None
+        date_before = self._parse_date(date_before_param) if date_before_param else None
+
+        if date_after and date_before and date_after > date_before:
+            raise DRFValidationError({"detail": "date_after must not be after date_before."})
+
+        if date_after:
+            qs = qs.filter(received_at__gte=timezone.make_aware(datetime.combine(date_after, time.min)))
+
+        if date_before:
+            qs = qs.filter(received_at__lte=timezone.make_aware(datetime.combine(date_before, time.max)))
+
+        return qs
 
     def get_serializer_class(self):
         if self.action == "create":

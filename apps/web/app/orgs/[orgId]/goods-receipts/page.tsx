@@ -34,8 +34,10 @@ export default function GoodsReceiptsPage() {
   const dateBefore = searchParams.get("date_before") ?? ""
   const page = searchParams.get("page") ?? "1"
 
+  const hasInvalidDateRange = !!dateAfter && !!dateBefore && dateAfter > dateBefore
+
   const receiptsQuery = useGoodsReceipts({
-    orgId,
+    orgId: hasInvalidDateRange ? "" : orgId,
     receipt_type: receiptType || undefined,
     branch: branch || undefined,
     supplier: supplier || undefined,

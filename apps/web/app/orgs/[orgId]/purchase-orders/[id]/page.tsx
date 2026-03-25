@@ -11,8 +11,15 @@ import { ConfirmDialog } from "@/components/shared/ConfirmDialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { usePOBranches } from "@/lib/hooks/purchase-orders/usePOBranches"
-import { usePOItemNames } from "@/lib/hooks/purchase-orders/usePOItemNames"
 import { usePOMutations } from "@/lib/hooks/purchase-orders/usePOMutations"
 import { usePurchaseOrder } from "@/lib/hooks/purchase-orders/usePurchaseOrder"
 import { usePOSuppliers } from "@/lib/hooks/purchase-orders/usePOSuppliers"
@@ -35,14 +42,9 @@ export default function PurchaseOrderDetailPage() {
   const [lineActionError, setLineActionError] = useState("")
 
   const po = purchaseOrderQuery.data
-  const itemIds = po?.lines.map((line) => line.item) ?? []
-  const itemNamesQuery = usePOItemNames(orgId, itemIds)
 
   const supplierMap = new Map((suppliersQuery.data ?? []).map((item) => [item.id, item.name]))
   const branchMap = new Map((branchesQuery.data ?? []).map((item) => [item.id, item.name]))
-  const itemNameMap = Object.fromEntries(
-    Object.entries(itemNamesQuery.data ?? {}).map(([key, value]) => [Number(key), value.name]),
-  )
 
   const errorMessage = purchaseOrderQuery.error instanceof Error ? purchaseOrderQuery.error.message : ""
   const isDraft = po?.status === "DRAFT"
@@ -76,7 +78,7 @@ export default function PurchaseOrderDetailPage() {
   }
 
   async function handleAddLine(payload: {
-    itemId: number
+    itemId: string
     itemName: string
     itemSku: string
     ordered_quantity: number
@@ -213,7 +215,6 @@ export default function PurchaseOrderDetailPage() {
         <CardContent className="space-y-4">
           <POLineTable
             lines={po.lines}
-            itemNames={itemNameMap}
             editable={isDraft}
             busy={isActionPending}
             onUpdateLine={handleUpdateLine}
@@ -223,10 +224,49 @@ export default function PurchaseOrderDetailPage() {
         </CardContent>
       </Card>
 
+      {po.receipts.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Receipts</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Received By</TableHead>
+                  <TableHead>Lines</TableHead>
+                  <TableHead>Total Qty</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {po.receipts.map((receipt) => (
+                  <TableRow key={receipt.id}>
+                    <TableCell>{new Date(receipt.received_at).toLocaleString()}</TableCell>
+                    <TableCell>{receipt.received_by ?? "—"}</TableCell>
+                    <TableCell>{receipt.line_count}</TableCell>
+                    <TableCell>{receipt.total_quantity_received}</TableCell>
+                    <TableCell>
+                      <Link
+                        href={`/orgs/${orgId}/goods-receipts/${receipt.id}`}
+                        className="text-sm text-primary hover:underline"
+                      >
+                        View
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {isDraft ? (
         <POLineAddForm
           orgId={orgId}
-          existingItemIds={po.lines.map((line) => line.item)}
+          existingItemIds={po.lines.map((line) => line.item.id)}
           onAddLine={(payload) => void handleAddLine(payload)}
           disabled={isActionPending}
         />

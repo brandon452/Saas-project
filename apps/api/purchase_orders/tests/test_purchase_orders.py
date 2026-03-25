@@ -5,7 +5,7 @@ from django.test import TransactionTestCase
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import Item
+from inventory.models import MasterItem, OrgItem
 from purchase_orders.models import PurchaseOrder
 from purchase_orders.services import generate_po_number
 from suppliers.models import Supplier
@@ -76,6 +76,14 @@ class PurchaseOrderNumberTests(TransactionTestCase):
 
 
 class PurchaseOrderApiTests(APITestCase):
+    def _create_org_item(self, organization, name, sku, *, item_name=""):
+        master_item = MasterItem.objects.create(name=name, sku=sku)
+        return OrgItem.objects.for_org(organization).create(
+            organization=organization,
+            master_item=master_item,
+            name=item_name,
+        )
+
     def setUp(self):
         User = get_user_model()
         self.owner = User.objects.create_user(username="po_owner", password="Passw0rd!")
@@ -130,21 +138,9 @@ class PurchaseOrderApiTests(APITestCase):
             name="Globex Supplier",
         )
 
-        self.item_a = Item.objects.for_org(self.acme).create(
-            organization=self.acme,
-            name="Item A",
-            sku="PO-A",
-        )
-        self.item_b = Item.objects.for_org(self.acme).create(
-            organization=self.acme,
-            name="Item B",
-            sku="PO-B",
-        )
-        self.other_item = Item.objects.for_org(self.globex).create(
-            organization=self.globex,
-            name="Globex Item",
-            sku="GPO-1",
-        )
+        self.item_a = self._create_org_item(self.acme, "Item A", "PO-A")
+        self.item_b = self._create_org_item(self.acme, "Item B", "PO-B")
+        self.other_item = self._create_org_item(self.globex, "Globex Item", "GPO-1")
 
         self.globex_po = PurchaseOrder.objects.for_org(self.globex).create(
             organization=self.globex,
@@ -702,3 +698,79 @@ class PurchaseOrderApiTests(APITestCase):
 
         own_retrieve = self.client.get(self._detail_url(acme_po.id), HTTP_HOST=self._host())
         self.assertEqual(own_retrieve.status_code, 200)
+
+    def test_retrieve_includes_nested_item_summary_and_receipt_summaries(self):
+        po = PurchaseOrder.objects.for_org(self.acme).create(
+            organization=self.acme,
+            po_number="PO-0005",
+            supplier=self.supplier,
+            branch=self.branch,
+            notes="With receipt history",
+            created_by=self.owner,
+        )
+        line_a = po.lines.create(item=self.item_a, ordered_quantity=5, unit_price=Decimal("4.50"))
+        line_b = po.lines.create(item=self.item_b, ordered_quantity=3, unit_price=Decimal("8.00"))
+
+        receipt_one = po.receipts.create(
+            organization=self.acme,
+            receipt_type="PO_RECEIPT",
+            branch=self.branch,
+            supplier=self.supplier,
+            received_by=self.owner,
+        )
+        receipt_one.lines.create(po_line=line_a, quantity_received=2, unit_cost=Decimal("4.50"))
+
+        receipt_two = po.receipts.create(
+            organization=self.acme,
+            receipt_type="PO_RECEIPT",
+            branch=self.branch,
+            supplier=self.supplier,
+            received_by=self.admin,
+        )
+        receipt_two.lines.create(po_line=line_a, quantity_received=1, unit_cost=Decimal("4.50"))
+        receipt_two.lines.create(po_line=line_b, quantity_received=3, unit_cost=Decimal("8.00"))
+
+        self._auth(self.owner)
+        response = self.client.get(self._detail_url(po.id), HTTP_HOST=self._host())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["lines"]), 2)
+        self.assertEqual(response.data["lines"][0]["item"]["id"], str(self.item_a.id))
+        self.assertEqual(response.data["lines"][0]["item"]["name"], self.item_a.display_name)
+        self.assertEqual(response.data["lines"][0]["item"]["sku"], self.item_a.master_item.sku)
+
+        self.assertEqual(response.data["receipts"], sorted(
+            response.data["receipts"],
+            key=lambda receipt: receipt["received_at"],
+            reverse=True,
+        ))
+        self.assertEqual(len(response.data["receipts"]), 2)
+
+        latest_receipt = response.data["receipts"][0]
+        earlier_receipt = response.data["receipts"][1]
+
+        self.assertEqual(latest_receipt["id"], str(receipt_two.id))
+        self.assertEqual(latest_receipt["received_by"], str(self.admin))
+        self.assertEqual(latest_receipt["line_count"], 2)
+        self.assertEqual(latest_receipt["total_quantity_received"], 4)
+
+        self.assertEqual(earlier_receipt["id"], str(receipt_one.id))
+        self.assertEqual(earlier_receipt["received_by"], str(self.owner))
+        self.assertEqual(earlier_receipt["line_count"], 1)
+        self.assertEqual(earlier_receipt["total_quantity_received"], 2)
+
+    def test_retrieve_includes_empty_receipts_list_when_none_exist(self):
+        po = PurchaseOrder.objects.for_org(self.acme).create(
+            organization=self.acme,
+            po_number="PO-0006",
+            supplier=self.supplier,
+            branch=self.branch,
+            created_by=self.owner,
+        )
+        po.lines.create(item=self.item_a, ordered_quantity=2, unit_price=Decimal("4.00"))
+
+        self._auth(self.owner)
+        response = self.client.get(self._detail_url(po.id), HTTP_HOST=self._host())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["receipts"], [])

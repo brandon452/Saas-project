@@ -19,6 +19,12 @@ ROLE_POLICY = {
         "partial_update": {"OWNER", "ADMIN"},
         "destroy": {"OWNER", "ADMIN"},
     },
+    "branch_items": {
+        "list": {"OWNER", "ADMIN", "STAFF"},
+        "retrieve": {"OWNER", "ADMIN", "STAFF"},
+        "create": {"OWNER", "ADMIN"},
+        "destroy": {"OWNER", "ADMIN"},
+    },
     "stock_on_hand": {
         "list": {"OWNER", "ADMIN", "STAFF"},
         "retrieve": {"OWNER", "ADMIN", "STAFF"},
@@ -26,6 +32,19 @@ ROLE_POLICY = {
     "movements": {
         "list": {"OWNER", "ADMIN", "STAFF"},
         "create": {"OWNER", "ADMIN", "STAFF"},
+    },
+    "stock_takes": {
+        "list": {"OWNER", "ADMIN", "STAFF"},
+        "retrieve": {"OWNER", "ADMIN", "STAFF"},
+        "create": {"OWNER", "ADMIN"},
+        "partial_update": {"OWNER", "ADMIN"},
+        "start": {"OWNER", "ADMIN"},
+        "submit": {"OWNER", "ADMIN"},
+        "reopen": {"OWNER", "ADMIN"},
+        "approve": {"OWNER", "ADMIN"},
+        "cancel": {"OWNER", "ADMIN"},
+        "lines": {"OWNER", "ADMIN", "STAFF"},
+        "update_line": {"OWNER", "ADMIN", "STAFF"},
     },
     "members": {
         "list": {"OWNER", "ADMIN"},
@@ -210,6 +229,32 @@ class IsParentAdmin(BasePermission):
     def has_permission(self, request, view):
         parent = get_parent_membership(request)
         return bool(parent and parent.role == ParentCompanyMember.PARENT_ADMIN)
+
+
+class IsParentMember(BasePermission):
+    """
+    Allows PARENT_ADMIN and PARENT_VIEWER.
+    Blocks org members and unauthenticated users.
+    Used for read-only parent-level endpoints accessible to all parent roles.
+    """
+
+    def has_permission(self, request, view):
+        parent = get_parent_membership(request)
+        return bool(parent and parent.is_active)
+
+
+class IsOrgOwnerOrAdmin(BasePermission):
+    """
+    Allows OWNER and ADMIN org members only.
+    Blocks STAFF, parent members, and unauthenticated users.
+    Used for org-scoped endpoints that must exclude STAFF.
+    """
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        role = get_member_role(request)
+        return role in {"OWNER", "ADMIN"}
 
 
 class RolePolicyPermission(BasePermission):

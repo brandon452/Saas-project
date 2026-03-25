@@ -12,7 +12,7 @@ class AdminSmokeTests(APITestCase):
 
     def test_superuser_can_authenticate_for_admin(self):
         User = get_user_model()
-        user = User.objects.create_superuser(
+        User.objects.create_superuser(
             username="admin_smoke",
             email="admin_smoke@example.com",
             password="Passw0rd!",

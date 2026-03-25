@@ -5,12 +5,20 @@ from django.db import IntegrityError
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import Item
+from inventory.models import MasterItem, OrgItem
 from inventory.services import record_stock_movement
 from tenancy.models import Organization, OrganizationMember, ParentCompanyMember
 
 
 class ParentAccessTests(APITestCase):
+    def _create_org_item(self, organization, name, sku, *, item_name=""):
+        master_item = MasterItem.objects.create(name=name, sku=sku)
+        return OrgItem.objects.for_org(organization).create(
+            organization=organization,
+            master_item=master_item,
+            name=item_name,
+        )
+
     def setUp(self):
         User = get_user_model()
         self.parent_admin_user = User.objects.create_user(username="parent_admin", password="Passw0rd!")
@@ -48,7 +56,7 @@ class ParentAccessTests(APITestCase):
             created_by=self.parent_admin_user,
         )
 
-        self.item_a = Item.objects.for_org(self.acme).create(organization=self.acme, name="I1", sku="I1")
+        self.item_a = self._create_org_item(self.acme, "I1", "I1")
         record_stock_movement(
             org=self.acme,
             branch=self.acme_branch_a,
@@ -146,7 +154,10 @@ class ParentAccessTests(APITestCase):
 
         item_write = self.client.post(
             self._org_url(self.acme.id, "inventory/items/"),
-            {"name": "Parent Write", "sku": "P-1"},
+            {
+                "master_item": str(MasterItem.objects.create(name="Parent Write", sku="P-1").id),
+                "name": "Parent Write",
+            },
             format="json",
         )
         self.assertEqual(item_write.status_code, 403)

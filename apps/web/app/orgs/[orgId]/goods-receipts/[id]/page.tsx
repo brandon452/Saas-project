@@ -157,7 +157,7 @@ export default function GoodsReceiptDetailPage() {
                   {receipt.receipt_type === "PO_RECEIPT" ? (
                     <TableCell className="font-mono text-sm">{truncateUuid(line.po_line)}</TableCell>
                   ) : null}
-                  <TableCell className="font-mono text-sm">{truncateUuid(line.item)}</TableCell>
+                  <TableCell>{line.item?.name ?? "—"}</TableCell>
                   <TableCell>{line.quantity_received}</TableCell>
                   <TableCell>{line.unit_cost ?? "—"}</TableCell>
                 </TableRow>

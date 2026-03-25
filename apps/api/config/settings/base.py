@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     "purchase_orders",
     "goods_receipts",
     "branch_transfers",
+    "reports",
 ]
 
 MIDDLEWARE = [
@@ -176,6 +177,10 @@ CACHES = {
 
 RATELIMIT_USE_CACHE = "default"
 
+
+from corsheaders.defaults import default_headers
+
+CORS_ALLOW_HEADERS = list(default_headers) + ["x-branch-id"]
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Inventory API",

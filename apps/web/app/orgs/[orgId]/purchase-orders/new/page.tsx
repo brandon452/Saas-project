@@ -17,7 +17,7 @@ import { formatPOValue } from "@/lib/utils/po"
 
 interface PendingLine {
   localId: string
-  itemId: number
+  itemId: string
   itemName: string
   itemSku: string
   ordered_quantity: number
@@ -37,7 +37,7 @@ export default function NewPurchaseOrderPage() {
   const [notes, setNotes] = useState("")
   const [pendingLines, setPendingLines] = useState<PendingLine[]>([])
   const [submitError, setSubmitError] = useState("")
-  const [createdPOId, setCreatedPOId] = useState<number | null>(null)
+  const [createdPOId, setCreatedPOId] = useState<string | null>(null)
 
   const isSubmitting = createPO.isPending || addLine.isPending
   const isLocked = createdPOId !== null || createPO.isPending
@@ -82,8 +82,8 @@ export default function NewPurchaseOrderPage() {
 
       if (!poId) {
         const po = await createPO.mutateAsync({
-          supplier: Number.parseInt(supplier, 10),
-          branch: Number.parseInt(branch, 10),
+          supplier,
+          branch,
           notes: notes || undefined,
         })
         poId = po.id

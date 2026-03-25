@@ -2,10 +2,39 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from inventory.models import StockLedger
+from inventory.models import BranchItem, OrgItem, StockLedger
 from inventory.services import record_stock_movement
 
 from .models import BranchTransfer, BranchTransferLine
+
+
+def _get_or_create_recipient_item(master_item, to_organization):
+    org_item, created = OrgItem.objects.get_or_create(
+        organization=to_organization,
+        master_item=master_item,
+        defaults={
+            "name": "",
+            "is_active": True,
+        },
+    )
+    if not created and not org_item.is_active:
+        org_item.is_active = True
+        org_item.save(update_fields=["is_active"])
+    return org_item
+
+
+def _get_or_create_recipient_branch_item(org_item, branch):
+    branch_item, created = BranchItem.objects.get_or_create(
+        org_item=org_item,
+        branch=branch,
+        defaults={
+            "is_active": True,
+        },
+    )
+    if not created and not branch_item.is_active:
+        branch_item.is_active = True
+        branch_item.save(update_fields=["is_active"])
+    return branch_item
 
 
 @transaction.atomic
@@ -72,9 +101,17 @@ def receive_transfer(transfer, lines_data, performed_by, receive_notes=""):
             )
 
         if quantity_received > 0:
+            recipient_item = _get_or_create_recipient_item(
+                master_item=line.item.master_item,
+                to_organization=transfer.to_organization,
+            )
+            _get_or_create_recipient_branch_item(
+                org_item=recipient_item,
+                branch=transfer.to_branch,
+            )
             record_stock_movement(
                 org=transfer.to_organization,
-                item=line.item,
+                item=recipient_item,
                 branch=transfer.to_branch,
                 quantity=quantity_received,
                 movement_type=StockLedger.MOVEMENT_RECEIPT,

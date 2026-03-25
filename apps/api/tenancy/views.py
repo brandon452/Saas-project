@@ -1,12 +1,18 @@
+from django.contrib.auth import get_user_model
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import viewsets
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.filters import OrderingFilter
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from .mixins import OrgScopedViewSetMixin
-from .models import OrganizationMember
-from .permissions import RolePolicyMixin
-from .serializers import MemberCreateSerializer, MemberSerializer, MemberUpdateSerializer
+from .models import Organization, OrganizationMember, ParentCompanyMember
+from .permissions import IsOrgMemberOrParent, RolePolicyMixin, get_member_role, get_parent_membership
+from .serializers import MemberCreateSerializer, MemberSerializer, MemberUpdateSerializer, UserSearchSerializer
+
+User = get_user_model()
 
 
 @extend_schema_view(
@@ -116,3 +122,40 @@ class MemberViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelViewSe
                 raise PermissionDenied("You cannot deactivate the last active OWNER in this organization.")
 
         serializer.save()
+
+
+class MemberSearchView(APIView):
+    permission_classes = [IsAuthenticated, IsOrgMemberOrParent]
+
+    def initial(self, request, *args, **kwargs):
+        org_id = self.kwargs.get("org_id")
+        try:
+            request.org = Organization.objects.get(pk=org_id, is_active=True)
+        except Organization.DoesNotExist:
+            raise NotFound("Organization not found.")
+
+        parent_membership = get_parent_membership(request)
+        request.parent_role = parent_membership.role if parent_membership else None
+        super().initial(request, *args, **kwargs)
+
+    def get(self, request, org_id=None, *args, **kwargs):
+        if get_member_role(request) != OrganizationMember.ROLE_OWNER:
+            raise PermissionDenied("You do not have permission to perform this action.")
+
+        email = request.query_params.get("email", "").strip()
+        if len(email) < 3:
+            return Response([])
+
+        users = User.objects.filter(email__iexact=email)
+
+        active_member_user_ids = OrganizationMember.objects.filter(
+            organization=request.org,
+            is_active=True,
+        ).values_list("user_id", flat=True)
+        parent_member_user_ids = ParentCompanyMember.objects.values_list("user_id", flat=True)
+
+        users = users.exclude(id__in=active_member_user_ids)
+        users = users.exclude(id__in=parent_member_user_ids)
+
+        serializer = UserSearchSerializer(users, many=True)
+        return Response(serializer.data)

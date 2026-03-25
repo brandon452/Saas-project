@@ -6,12 +6,12 @@ from django.test import override_settings
 from django.urls import clear_url_caches
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
-from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
+from rest_framework_simplejwt.tokens import AccessToken
 
 from auth.authentication import CookieJWTAuthentication
 from auth.models import AuthAuditLog
 from branches.models import Branch
-from inventory.models import Item
+from inventory.models import MasterItem, OrgItem
 from tenancy.models import Organization, OrganizationMember, ParentCompanyMember
 
 
@@ -39,7 +39,8 @@ class CookieAuthTests(APITestCase):
             is_active=True,
         )
         self.branch = Branch.objects.create(organization=self.org, name="Main", code="MAIN")
-        self.item = Item.objects.create(organization=self.org, name="Widget", sku="W-1")
+        self.master_item = MasterItem.objects.create(name="Widget", sku="W-1")
+        self.item = OrgItem.objects.create(organization=self.org, master_item=self.master_item, name="")
 
     def _login(self, username="cookie_user", password="Passw0rd!"):
         return self.client.post(

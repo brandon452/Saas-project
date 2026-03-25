@@ -1,9 +1,15 @@
 export type ReceiptType = "PO_RECEIPT" | "DIRECT_RECEIPT"
 
+export interface GoodsReceiptItem {
+  id: string
+  name: string
+  sku: string
+}
+
 export interface GoodsReceiptLine {
   id: string
   po_line: string | null
-  item: string | null
+  item: GoodsReceiptItem | null
   quantity_received: number
   unit_cost: string | null
 }

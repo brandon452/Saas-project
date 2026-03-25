@@ -7,13 +7,21 @@ from rest_framework.test import APITestCase
 
 from branch_transfers.models import BranchTransfer
 from branches.models import Branch
-from inventory.models import Item, StockLedger, StockOnHand
+from inventory.models import MasterItem, OrgItem, StockLedger, StockOnHand
 from inventory.services import record_stock_movement
 from suppliers.models import Supplier
 from tenancy.models import Organization, OrganizationMember, ParentCompanyMember
 
 
 class BranchTransferApiTests(APITestCase):
+    def _create_org_item(self, organization, name, sku, *, item_name=""):
+        master_item = MasterItem.objects.create(name=name, sku=sku)
+        return OrgItem.objects.for_org(organization).create(
+            organization=organization,
+            master_item=master_item,
+            name=item_name,
+        )
+
     def setUp(self):
         User = get_user_model()
         self.sender_owner = User.objects.create_user(username="bt_sender_owner", password="Passw0rd!")
@@ -75,21 +83,9 @@ class BranchTransferApiTests(APITestCase):
             created_by=self.receiver_owner,
         )
 
-        self.acme_item_a = Item.objects.for_org(self.acme).create(
-            organization=self.acme,
-            name="Acme Item A",
-            sku="BT-A",
-        )
-        self.acme_item_b = Item.objects.for_org(self.acme).create(
-            organization=self.acme,
-            name="Acme Item B",
-            sku="BT-B",
-        )
-        self.globex_item = Item.objects.for_org(self.globex).create(
-            organization=self.globex,
-            name="Globex Item",
-            sku="GBT-1",
-        )
+        self.acme_item_a = self._create_org_item(self.acme, "Acme Item A", "BT-A")
+        self.acme_item_b = self._create_org_item(self.acme, "Acme Item B", "BT-B")
+        self.globex_item = self._create_org_item(self.globex, "Globex Item", "GBT-1")
 
     def _auth(self, user):
         self.client.force_authenticate(user=user)
@@ -167,6 +163,10 @@ class BranchTransferApiTests(APITestCase):
         ):
             response = self._create_transfer(user=user)
             self.assertEqual(response.status_code, expected_status)
+            if expected_status == 201:
+                self.assertEqual(response.data["lines"][0]["item"]["id"], str(self.acme_item_a.id))
+                self.assertEqual(response.data["lines"][0]["item"]["name"], self.acme_item_a.display_name)
+                self.assertEqual(response.data["lines"][0]["item"]["sku"], self.acme_item_a.master_item.sku)
 
         created = BranchTransfer.objects.for_org(self.acme).order_by("created_at").first()
         self.assertIsNotNone(created)
@@ -220,6 +220,20 @@ class BranchTransferApiTests(APITestCase):
             lines=[{"item": str(self.acme_item_a.id), "quantity_sent": -1}],
         )
         self.assertEqual(negative_quantity.status_code, 400)
+
+    def test_retrieve_returns_nested_item_summary(self):
+        transfer = self._make_transfer()
+
+        self._auth(self.sender_owner)
+        response = self.client.get(
+            self._detail_url(self.acme.id, transfer.id),
+            HTTP_HOST=self._host(self.acme.slug),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["lines"][0]["item"]["id"], str(self.acme_item_a.id))
+        self.assertEqual(response.data["lines"][0]["item"]["name"], self.acme_item_a.display_name)
+        self.assertEqual(response.data["lines"][0]["item"]["sku"], self.acme_item_a.master_item.sku)
 
     def test_approve_rules(self):
         transfer = self._make_transfer()
@@ -388,10 +402,16 @@ class BranchTransferApiTests(APITestCase):
         self.assertEqual(mocked_record.call_args_list[0].kwargs["movement_type"], StockLedger.MOVEMENT_RECEIPT)
         self.assertEqual(mocked_record.call_args_list[0].kwargs["branch"], self.globex_branch)
 
-        receiver_stock_a = StockOnHand.objects.for_org(self.globex).get(branch=self.globex_branch, item=self.acme_item_a)
-        receiver_stock_b = StockOnHand.objects.for_org(self.globex).get(branch=self.globex_branch, item=self.acme_item_b)
+        recipient_item_a = OrgItem.objects.for_org(self.globex).get(master_item=self.acme_item_a.master_item)
+        recipient_item_b = OrgItem.objects.for_org(self.globex).get(master_item=self.acme_item_b.master_item)
+        receiver_stock_a = StockOnHand.objects.for_org(self.globex).get(branch=self.globex_branch, item=recipient_item_a)
+        receiver_stock_b = StockOnHand.objects.for_org(self.globex).get(branch=self.globex_branch, item=recipient_item_b)
         self.assertEqual(receiver_stock_a.quantity, Decimal("3.0000"))
         self.assertEqual(receiver_stock_b.quantity, Decimal("2.0000"))
+        self.assertEqual(recipient_item_a.master_item, self.acme_item_a.master_item)
+        self.assertEqual(recipient_item_b.master_item, self.acme_item_b.master_item)
+        self.assertTrue(recipient_item_a.is_active)
+        self.assertTrue(recipient_item_b.is_active)
 
         for user in (self.receiver_admin, self.receiver_staff):
             transfer2 = self._make_transfer(status=BranchTransfer.IN_TRANSIT)
@@ -659,3 +679,33 @@ class BranchTransferApiTests(APITestCase):
         self.assertEqual(transfer.status, BranchTransfer.IN_TRANSIT)
         self.assertFalse(StockOnHand.objects.for_org(self.globex).exists())
         self.assertTrue(all(line.quantity_received is None for line in transfer.lines.all()))
+
+    def test_receive_reuses_existing_recipient_org_item(self):
+        existing = OrgItem.objects.for_org(self.globex).create(
+            organization=self.globex,
+            master_item=self.acme_item_a.master_item,
+            name="Receiver Alias",
+        )
+        transfer = self._make_transfer(status=BranchTransfer.IN_TRANSIT)
+        line_ids = list(transfer.lines.order_by("id").values_list("id", flat=True))
+
+        self._auth(self.receiver_owner)
+        response = self.client.post(
+            self._detail_url(self.globex.id, transfer.id, "receive/"),
+            {
+                "lines": [
+                    {"line_id": line_ids[0], "quantity_received": 1},
+                    {"line_id": line_ids[1], "quantity_received": 0},
+                ]
+            },
+            format="json",
+            HTTP_HOST=self._host(self.globex.slug),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            OrgItem.objects.for_org(self.globex).filter(master_item=self.acme_item_a.master_item).count(),
+            1,
+        )
+        stock = StockOnHand.objects.for_org(self.globex).get(branch=self.globex_branch, item=existing)
+        self.assertEqual(stock.quantity, Decimal("1.0000"))

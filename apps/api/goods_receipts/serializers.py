@@ -2,17 +2,26 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from inventory.models import Item
+from inventory.models import BranchItem, OrgItem
+from inventory.serializers import ItemSummarySerializer
 from suppliers.models import Supplier
 
 from .models import GoodsReceipt, GoodsReceiptLine
 
 
 class GoodsReceiptLineSerializer(serializers.ModelSerializer):
+    item = serializers.SerializerMethodField()
+
     class Meta:
         model = GoodsReceiptLine
         fields = ["id", "po_line", "item", "quantity_received", "unit_cost"]
         read_only_fields = ["id"]
+
+    def get_item(self, obj):
+        item = obj.item or getattr(obj.po_line, "item", None)
+        if item is None:
+            return None
+        return ItemSummarySerializer(item).data
 
 
 class GoodsReceiptLineWriteSerializer(serializers.ModelSerializer):
@@ -67,6 +76,28 @@ class GoodsReceiptSerializer(serializers.ModelSerializer):
             "received_at",
             "lines",
         ]
+
+
+class POReceiptSummarySerializer(serializers.ModelSerializer):
+    received_by = serializers.StringRelatedField()
+    line_count = serializers.SerializerMethodField()
+    total_quantity_received = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GoodsReceipt
+        fields = [
+            "id",
+            "received_at",
+            "received_by",
+            "line_count",
+            "total_quantity_received",
+        ]
+
+    def get_line_count(self, obj):
+        return len(obj.lines.all())
+
+    def get_total_quantity_received(self, obj):
+        return sum(line.quantity_received for line in obj.lines.all())
 
 
 class GoodsReceiptCreateSerializer(serializers.ModelSerializer):
@@ -129,7 +160,7 @@ class GoodsReceiptCreateSerializer(serializers.ModelSerializer):
 
 
 class DirectReceiptLineWriteSerializer(serializers.Serializer):
-    item = serializers.PrimaryKeyRelatedField(queryset=Item.objects.all())
+    item = serializers.PrimaryKeyRelatedField(queryset=OrgItem.objects.all())
     quantity_received = serializers.IntegerField(min_value=1)
     unit_cost = serializers.DecimalField(
         max_digits=10,
@@ -145,6 +176,14 @@ class DirectReceiptLineWriteSerializer(serializers.Serializer):
         request = self.context["request"]
         if value.organization != request.org:
             raise serializers.ValidationError("Item does not belong to this organisation.")
+        branch = getattr(request, "branch", None)
+        if branch is not None:
+            if not BranchItem.objects.filter(
+                org_item=value,
+                branch=branch,
+                is_active=True,
+            ).exists():
+                raise serializers.ValidationError("Item is not enabled at this branch.")
         return value
 
 

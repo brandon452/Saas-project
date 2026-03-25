@@ -12,7 +12,11 @@ import {
 
 export interface POReceiptLineRow {
   po_line: string
-  item: string
+  item: {
+    id: string
+    name: string
+    sku: string
+  }
   ordered_quantity: number
   remaining_quantity: number
   quantity_received: number
@@ -22,10 +26,6 @@ export interface POReceiptLineRow {
 interface POReceiptLineTableProps {
   lines: POReceiptLineRow[]
   onChange: (lines: POReceiptLineRow[]) => void
-}
-
-function truncateUuid(value: string) {
-  return `${value.slice(0, 8)}...`
 }
 
 export function POReceiptLineTable({ lines, onChange }: POReceiptLineTableProps) {
@@ -59,7 +59,7 @@ export function POReceiptLineTable({ lines, onChange }: POReceiptLineTableProps)
 
           return (
             <TableRow key={line.po_line}>
-              <TableCell className="font-mono text-sm">{truncateUuid(line.item)}</TableCell>
+              <TableCell>{line.item.name}</TableCell>
               <TableCell>{line.ordered_quantity}</TableCell>
               <TableCell>{line.remaining_quantity}</TableCell>
               <TableCell className="space-y-2">

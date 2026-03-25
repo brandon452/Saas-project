@@ -76,7 +76,7 @@ class PurchaseOrderLine(models.Model):
         related_name="lines",
     )
     item = models.ForeignKey(
-        "inventory.Item",
+        "inventory.OrgItem",
         on_delete=models.PROTECT,
         related_name="purchase_order_lines",
     )

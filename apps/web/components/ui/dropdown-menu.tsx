@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 type DropdownMenuContextValue = {
   open: boolean
   setOpen: React.Dispatch<React.SetStateAction<boolean>>
+  triggerRef: React.MutableRefObject<HTMLElement | null>
 }
 
 const DropdownMenuContext = React.createContext<DropdownMenuContextValue | null>(null)
@@ -21,9 +22,10 @@ function useDropdownMenuContext() {
 
 export function DropdownMenu({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = React.useState(false)
+  const triggerRef = React.useRef<HTMLElement | null>(null)
 
   return (
-    <DropdownMenuContext.Provider value={{ open, setOpen }}>
+    <DropdownMenuContext.Provider value={{ open, setOpen, triggerRef }}>
       <div className="relative">{children}</div>
     </DropdownMenuContext.Provider>
   )
@@ -36,22 +38,25 @@ export function DropdownMenuTrigger({
   children: React.ReactElement
   asChild?: boolean
 }) {
-  const { open, setOpen } = useDropdownMenuContext()
+  const { open, setOpen, triggerRef } = useDropdownMenuContext()
 
-  if (asChild && React.isValidElement(children)) {
-    const child = children as React.ReactElement<{
-      onClick?: (event: React.MouseEvent) => void
-    }>
+  const handleClick = () => setOpen(!open)
 
-    return React.cloneElement(child, {
-      onClick: (event: React.MouseEvent) => {
-        child.props.onClick?.(event)
-        setOpen(!open)
-      },
-    })
-  }
+  const child =
+    asChild && React.isValidElement(children)
+      ? React.cloneElement(children as React.ReactElement<{ onClick?: (e: React.MouseEvent) => void }>, {
+          onClick: (e: React.MouseEvent) => {
+            ;(children.props as { onClick?: (e: React.MouseEvent) => void }).onClick?.(e)
+            handleClick()
+          },
+        })
+      : <button onClick={handleClick}>{children}</button>
 
-  return <button onClick={() => setOpen(!open)}>{children}</button>
+  return (
+    <span ref={triggerRef as React.MutableRefObject<HTMLSpanElement>} style={{ display: "contents" }}>
+      {child}
+    </span>
+  )
 }
 
 export function DropdownMenuContent({
@@ -63,21 +68,27 @@ export function DropdownMenuContent({
   align?: "start" | "end"
   className?: string
 }) {
-  const { open, setOpen } = useDropdownMenuContext()
+  const { open, setOpen, triggerRef } = useDropdownMenuContext()
   const ref = React.useRef<HTMLDivElement | null>(null)
 
   React.useEffect(() => {
     if (!open) return
 
     function handlePointerDown(event: MouseEvent) {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
+      const target = event.target as Node
+      if (
+        ref.current &&
+        !ref.current.contains(target) &&
+        triggerRef.current &&
+        !triggerRef.current.contains(target)
+      ) {
         setOpen(false)
       }
     }
 
     document.addEventListener("mousedown", handlePointerDown)
     return () => document.removeEventListener("mousedown", handlePointerDown)
-  }, [open, setOpen])
+  }, [open, setOpen, triggerRef])
 
   if (!open) return null
 

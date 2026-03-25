@@ -78,7 +78,7 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
                     "approved_by",
                     "received_by",
                 )
-                .prefetch_related("lines__item")
+                .prefetch_related("lines__item__master_item")
                 .order_by("-created_at")
             )
 
@@ -95,7 +95,7 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
                 "approved_by",
                 "received_by",
             )
-            .prefetch_related("lines__item")
+            .prefetch_related("lines__item__master_item")
             .distinct()
         )
 

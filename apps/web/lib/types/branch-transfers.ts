@@ -8,9 +8,15 @@ export type TransferStatus =
 
 export type TransferDirection = "Outbound" | "Inbound" | "Internal"
 
+export interface BranchTransferItem {
+  id: string
+  name: string
+  sku: string
+}
+
 export interface BranchTransferLine {
   id: number
-  item: string
+  item: BranchTransferItem
   quantity_sent: number
   quantity_received: number | null
 }

@@ -10,8 +10,8 @@ from rest_framework.test import APITestCase
 
 from branches.models import Branch
 from goods_receipts.models import GoodsReceipt, GoodsReceiptLine
-from goods_receipts.services import post_direct_receipt, post_po_receipt
-from inventory.models import StockLedger, StockOnHand
+from goods_receipts.services import post_po_receipt
+from inventory.models import MasterItem, OrgItem, StockLedger, StockOnHand
 from inventory.services import record_stock_movement
 from purchase_orders.models import PurchaseOrder
 from suppliers.models import Supplier
@@ -19,6 +19,14 @@ from tenancy.models import Organization, OrganizationMember, ParentCompanyMember
 
 
 class GoodsReceiptApiTests(APITestCase):
+    def _create_org_item(self, organization, name, sku, *, item_name=""):
+        master_item = MasterItem.objects.create(name=name, sku=sku)
+        return OrgItem.objects.for_org(organization).create(
+            organization=organization,
+            master_item=master_item,
+            name=item_name,
+        )
+
     def setUp(self):
         User = get_user_model()
         self.owner = User.objects.create_user(username="gr_owner", password="Passw0rd!")
@@ -61,23 +69,9 @@ class GoodsReceiptApiTests(APITestCase):
             name="Globex Supplier",
         )
 
-        from inventory.models import Item
-
-        self.item_a = Item.objects.for_org(self.acme).create(
-            organization=self.acme,
-            name="Item A",
-            sku="GR-A",
-        )
-        self.item_b = Item.objects.for_org(self.acme).create(
-            organization=self.acme,
-            name="Item B",
-            sku="GR-B",
-        )
-        self.other_item = Item.objects.for_org(self.globex).create(
-            organization=self.globex,
-            name="Globex Item",
-            sku="GR-G",
-        )
+        self.item_a = self._create_org_item(self.acme, "Item A", "GR-A")
+        self.item_b = self._create_org_item(self.acme, "Item B", "GR-B")
+        self.other_item = self._create_org_item(self.globex, "Globex Item", "GR-G")
 
         self.submitted_po = PurchaseOrder.objects.for_org(self.acme).create(
             organization=self.acme,
@@ -458,6 +452,9 @@ class GoodsReceiptApiTests(APITestCase):
             ],
         )
         self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["lines"][0]["item"]["id"], str(self.item_a.id))
+        self.assertEqual(response.data["lines"][0]["item"]["name"], self.item_a.display_name)
+        self.assertEqual(response.data["lines"][0]["item"]["sku"], self.item_a.master_item.sku)
 
         receipt = GoodsReceipt.objects.for_org(self.acme).get(pk=response.data["id"])
         self.assertEqual(receipt.receipt_type, GoodsReceipt.DIRECT_RECEIPT)
@@ -477,6 +474,24 @@ class GoodsReceiptApiTests(APITestCase):
         stock_b = StockOnHand.objects.for_org(self.acme).get(branch=self.branch, item=self.item_b)
         self.assertEqual(stock_a.quantity, Decimal("2.0000"))
         self.assertEqual(stock_b.quantity, Decimal("1.0000"))
+
+    def test_receipt_retrieve_returns_nested_item_summary(self):
+        self._auth(self.owner)
+        created = self._post_direct(
+            supplier=self.supplier.id,
+            lines=[{"item": self.item_a.id, "quantity_received": 2, "unit_cost": "4.25"}],
+        )
+        self.assertEqual(created.status_code, 201)
+
+        response = self.client.get(
+            self._detail_url(created.data["id"]),
+            HTTP_HOST=self._host(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["lines"][0]["item"]["id"], str(self.item_a.id))
+        self.assertEqual(response.data["lines"][0]["item"]["name"], self.item_a.display_name)
+        self.assertEqual(response.data["lines"][0]["item"]["sku"], self.item_a.master_item.sku)
 
     def test_direct_receipt_optional_supplier_and_source_reference_blank(self):
         self._auth(self.owner)
@@ -679,6 +694,14 @@ class GoodsReceiptApiTests(APITestCase):
 class GoodsReceiptConcurrencyTests(TransactionTestCase):
     reset_sequences = True
 
+    def _create_org_item(self, organization, name, sku, *, item_name=""):
+        master_item = MasterItem.objects.create(name=name, sku=sku)
+        return OrgItem.objects.for_org(organization).create(
+            organization=organization,
+            master_item=master_item,
+            name=item_name,
+        )
+
     def setUp(self):
         User = get_user_model()
         self.user = User.objects.create_user(username="gr_concurrency_user", password="Passw0rd!")
@@ -694,13 +717,7 @@ class GoodsReceiptConcurrencyTests(TransactionTestCase):
             created_by=self.user,
         )
 
-        from inventory.models import Item
-
-        self.item = Item.objects.for_org(self.org).create(
-            organization=self.org,
-            name="Concurrent Item",
-            sku="CON-GR",
-        )
+        self.item = self._create_org_item(self.org, "Concurrent Item", "CON-GR")
         self.po = PurchaseOrder.objects.for_org(self.org).create(
             organization=self.org,
             po_number="PO-0001",

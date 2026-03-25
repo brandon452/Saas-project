@@ -24,6 +24,8 @@ export function GoodsReceiptFilters({ branches, suppliers }: GoodsReceiptFilters
   const dateAfter = searchParams.get("date_after") ?? ""
   const dateBefore = searchParams.get("date_before") ?? ""
 
+  const hasInvalidDateRange = !!dateAfter && !!dateBefore && dateAfter > dateBefore
+
   function updateFilter(key: string, value: string) {
     const params = new URLSearchParams(searchParams.toString())
 
@@ -121,6 +123,12 @@ export function GoodsReceiptFilters({ branches, suppliers }: GoodsReceiptFilters
           Clear filters
         </Button>
       </div>
+
+      {hasInvalidDateRange ? (
+        <div className="md:col-span-2 xl:col-span-6">
+          <p className="text-sm text-red-600">Date from must be on or before date to.</p>
+        </div>
+      ) : null}
     </div>
   )
 }

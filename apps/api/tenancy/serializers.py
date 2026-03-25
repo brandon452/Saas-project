@@ -22,6 +22,13 @@ class MemberUserSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "username", "email"]
 
 
+class UserSearchSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    email = serializers.EmailField()
+    first_name = serializers.CharField(allow_blank=True)
+    last_name = serializers.CharField(allow_blank=True)
+
+
 class BranchSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = Branch

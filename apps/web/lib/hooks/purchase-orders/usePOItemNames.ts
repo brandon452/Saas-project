@@ -6,14 +6,14 @@ import { apiRequest } from "@/lib/api"
 import type { Item, PaginatedResponse } from "@/lib/types/purchase-orders"
 import { toRelativePath } from "@/lib/utils/pagination"
 
-export function usePOItemNames(orgId: string, itemIds: number[]) {
-  const stableIds = [...new Set(itemIds)].sort((a, b) => a - b)
+export function usePOItemNames(orgId: string, itemIds: string[]) {
+  const stableIds = [...new Set(itemIds)].sort()
 
-  return useQuery<Record<number, Item>>({
+  return useQuery<Record<string, Item>>({
     queryKey: ["items", orgId, "resolve", stableIds.join(",")],
     queryFn: async () => {
       const unresolved = new Set(stableIds)
-      const resolved: Record<number, Item> = {}
+      const resolved: Record<string, Item> = {}
       let nextPath: string | null = `orgs/${orgId}/inventory/items/`
 
       while (nextPath && unresolved.size > 0) {

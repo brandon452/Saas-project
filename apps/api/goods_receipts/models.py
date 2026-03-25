@@ -74,7 +74,7 @@ class GoodsReceiptLine(models.Model):
         blank=True,
     )
     item = models.ForeignKey(
-        "inventory.Item",
+        "inventory.OrgItem",
         on_delete=models.PROTECT,
         related_name="direct_receipt_lines",
         null=True,

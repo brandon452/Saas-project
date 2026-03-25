@@ -1,11 +1,20 @@
 import type { ComponentType } from "react"
 import {
   ArrowLeftRight,
+  BarChart3,
+  BookOpen,
+  Building2,
   ClipboardCheck,
+  ClipboardList,
+  History,
   LayoutDashboard,
+  Layers,
   Package,
   Settings,
+  SlidersHorizontal,
   ShoppingCart,
+  Tag,
+  TrendingUp,
   Truck,
   Users,
 } from "lucide-react"
@@ -34,8 +43,20 @@ export function getNavGroups(orgId: string): NavGroup[] {
           allowedRoles: "all",
         },
         {
+          label: "Items",
+          href: `/orgs/${orgId}/inventory/items`,
+          icon: Tag,
+          allowedRoles: "all",
+        },
+        {
+          label: "Branch Items",
+          href: `/orgs/${orgId}/branch-items`,
+          icon: Layers,
+          allowedRoles: "all",
+        },
+        {
           label: "Stock Levels",
-          href: `/orgs/${orgId}/stock-levels`,
+          href: `/orgs/${orgId}/stock`,
           icon: Package,
           allowedRoles: "all",
         },
@@ -68,15 +89,39 @@ export function getNavGroups(orgId: string): NavGroup[] {
           icon: ArrowLeftRight,
           allowedRoles: "all",
         },
+        {
+          label: "Stock Takes",
+          href: `/orgs/${orgId}/stock-takes`,
+          icon: ClipboardList,
+          allowedRoles: "all",
+        },
+        {
+          label: "Stock Adjustments",
+          href: `/orgs/${orgId}/stock-adjustments`,
+          icon: SlidersHorizontal,
+          allowedRoles: "all",
+        },
+        {
+          label: "Stock Movements",
+          href: `/orgs/${orgId}/stock-movements`,
+          icon: History,
+          allowedRoles: "all",
+        },
       ],
     },
     {
       label: "Administration",
       items: [
         {
-          label: "Users & Org Management",
+          label: "Users",
           href: `/orgs/${orgId}/users`,
           icon: Users,
+          allowedRoles: ["OWNER", "ADMIN"],
+        },
+        {
+          label: "Branches",
+          href: `/orgs/${orgId}/branches`,
+          icon: Building2,
           allowedRoles: ["OWNER", "ADMIN"],
         },
         {
@@ -84,6 +129,39 @@ export function getNavGroups(orgId: string): NavGroup[] {
           href: `/orgs/${orgId}/settings`,
           icon: Settings,
           allowedRoles: ["OWNER", "ADMIN"],
+        },
+      ],
+    },
+    {
+      label: "Reports",
+      items: [
+        {
+          label: "Cost Trend",
+          href: `/orgs/${orgId}/reports/cost-trend`,
+          icon: TrendingUp,
+          allowedRoles: ["OWNER", "ADMIN"],
+        },
+        {
+          label: "Stock Valuation",
+          href: `/orgs/${orgId}/reports/stock-valuation`,
+          icon: BarChart3,
+          allowedRoles: ["OWNER", "ADMIN"],
+        },
+      ],
+    },
+  ]
+}
+
+export function getParentNavGroups(): NavGroup[] {
+  return [
+    {
+      label: "Catalog",
+      items: [
+        {
+          label: "Master Items",
+          href: "/parent/master-items",
+          icon: BookOpen,
+          allowedRoles: "all",
         },
       ],
     },

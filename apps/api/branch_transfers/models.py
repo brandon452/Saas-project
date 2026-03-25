@@ -96,7 +96,7 @@ class BranchTransferLine(models.Model):
         related_name="lines",
     )
     item = models.ForeignKey(
-        "inventory.Item",
+        "inventory.OrgItem",
         on_delete=models.PROTECT,
         related_name="transfer_lines",
     )

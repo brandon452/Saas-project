@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -17,7 +17,6 @@ import { formatPOValue } from "@/lib/utils/po"
 
 interface POLineTableProps {
   lines: POLine[]
-  itemNames?: Record<number, string>
   editable?: boolean
   busy?: boolean
   onUpdateLine?: (
@@ -31,7 +30,6 @@ type DraftValues = Record<number, { ordered_quantity: string; unit_price: string
 
 export function POLineTable({
   lines,
-  itemNames = {},
   editable,
   busy,
   onUpdateLine,
@@ -51,8 +49,6 @@ export function POLineTable({
     setDraftValues(nextDrafts)
     setRowError("")
   }, [lines])
-
-  const itemNameMap = useMemo(() => itemNames, [itemNames])
 
   async function handleBlur(line: POLine, field: "ordered_quantity" | "unit_price") {
     if (!editable || !onUpdateLine) return
@@ -123,7 +119,7 @@ export function POLineTable({
 
             return (
               <TableRow key={line.id}>
-                <TableCell>{itemNameMap[line.item] ?? "—"}</TableCell>
+                <TableCell>{line.item.name}</TableCell>
                 <TableCell>
                   {editable ? (
                     <Input

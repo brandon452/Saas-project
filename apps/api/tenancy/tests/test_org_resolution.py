@@ -6,12 +6,20 @@ from django.urls import Resolver404, resolve
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import Item
+from inventory.models import MasterItem, OrgItem
 from tenancy.models import Organization, OrganizationMember
 from tenancy.permissions import IsOrgMember
 
 
 class OrgResolutionTests(APITestCase):
+    def _create_org_item(self, organization, name, sku, *, item_name=""):
+        master_item = MasterItem.objects.create(name=name, sku=sku)
+        return OrgItem.objects.for_org(organization).create(
+            organization=organization,
+            master_item=master_item,
+            name=item_name,
+        )
+
     def setUp(self):
         User = get_user_model()
         self.user = User.objects.create_user(username="org_user", password="Passw0rd!")
@@ -33,11 +41,7 @@ class OrgResolutionTests(APITestCase):
             name="Globex Main",
             code="GLOBEX-MAIN",
         )
-        self.acme_item = Item.objects.for_org(self.acme).create(
-            organization=self.acme,
-            name="Item",
-            sku="ITEM-1",
-        )
+        self.acme_item = self._create_org_item(self.acme, "Item", "ITEM-1")
 
     def test_org_resolution_from_url(self):
         self.client.force_authenticate(self.user)

@@ -1,9 +1,15 @@
 from rest_framework import serializers
 
+from goods_receipts.serializers import POReceiptSummarySerializer
+from inventory.models import BranchItem
+from inventory.serializers import ItemSummarySerializer
+
 from .models import PurchaseOrder, PurchaseOrderLine
 
 
 class PurchaseOrderLineSerializer(serializers.ModelSerializer):
+    item = ItemSummarySerializer(read_only=True)
+
     class Meta:
         model = PurchaseOrderLine
         fields = [
@@ -13,7 +19,7 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
             "unit_price",
             "received_quantity",
         ]
-        read_only_fields = ["id", "received_quantity"]
+        read_only_fields = ["id", "item", "received_quantity"]
 
 
 class PurchaseOrderLineWriteSerializer(serializers.ModelSerializer):
@@ -35,6 +41,14 @@ class PurchaseOrderLineWriteSerializer(serializers.ModelSerializer):
         request = self.context["request"]
         if value.organization != request.org:
             raise serializers.ValidationError("Item does not belong to this organisation.")
+        branch = getattr(request, "branch", None)
+        if branch is not None:
+            if not BranchItem.objects.filter(
+                org_item=value,
+                branch=branch,
+                is_active=True,
+            ).exists():
+                raise serializers.ValidationError("Item is not enabled at this branch.")
         return value
 
     def validate(self, attrs):
@@ -55,6 +69,7 @@ class PurchaseOrderLineWriteSerializer(serializers.ModelSerializer):
 
 class PurchaseOrderSerializer(serializers.ModelSerializer):
     lines = PurchaseOrderLineSerializer(many=True, read_only=True)
+    receipts = POReceiptSummarySerializer(many=True, read_only=True)
 
     class Meta:
         model = PurchaseOrder
@@ -66,6 +81,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             "status",
             "notes",
             "lines",
+            "receipts",
             "created_by",
             "created_at",
             "updated_at",
@@ -75,6 +91,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             "po_number",
             "status",
             "lines",
+            "receipts",
             "created_by",
             "created_at",
             "updated_at",

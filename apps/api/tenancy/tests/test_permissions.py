@@ -7,13 +7,21 @@ from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import AccessToken
 
 from branches.models import Branch
-from inventory.models import Item
+from inventory.models import BranchItem, MasterItem, OrgItem
 from inventory.services import record_stock_movement
 from tenancy.models import Organization, OrganizationMember
 from tenancy.permissions import RolePolicyPermission, get_member_role
 
 
 class RolePolicyTests(APITestCase):
+    def _create_org_item(self, organization, name, sku, *, item_name=""):
+        master_item = MasterItem.objects.create(name=name, sku=sku)
+        return OrgItem.objects.for_org(organization).create(
+            organization=organization,
+            master_item=master_item,
+            name=item_name,
+        )
+
     def setUp(self):
         User = get_user_model()
         self.owner = User.objects.create_user(username="owner_user", password="Passw0rd!")
@@ -45,12 +53,8 @@ class RolePolicyTests(APITestCase):
         self.globex_owner = User.objects.create_user(username="globex_owner", password="Passw0rd!")
         OrganizationMember.objects.create(user=self.globex_owner, organization=self.globex, role="OWNER", is_active=True)
 
-        self.acme_item = Item.objects.for_org(self.acme).create(organization=self.acme, name="Acme Item", sku="ACME-1")
-        self.globex_item = Item.objects.for_org(self.globex).create(
-            organization=self.globex,
-            name="Globex Item",
-            sku="GLOB-1",
-        )
+        self.acme_item = self._create_org_item(self.acme, "Acme Item", "ACME-1")
+        self.globex_item = self._create_org_item(self.globex, "Globex Item", "GLOB-1")
 
         record_stock_movement(
             org=self.acme,
@@ -71,17 +75,15 @@ class RolePolicyTests(APITestCase):
     def test_item_role_matrix(self):
         roles = [(self.owner, 201, 200, 204), (self.admin, 201, 200, 204), (self.staff, 403, 403, 403)]
         for user, create_status, patch_status, delete_status in roles:
-            item = Item.objects.for_org(self.acme).create(
-                organization=self.acme,
-                name=f"I-{user.username}",
-                sku=f"SKU-{user.username}",
-            )
+            item = self._create_org_item(self.acme, f"I-{user.username}", f"SKU-{user.username}")
+            BranchItem.objects.create(org_item=item, branch=self.acme_branch)
+            master_item = MasterItem.objects.create(name=f"N-{user.username}", sku=f"N-{user.username}")
             self._auth(user)
             list_res = self.client.get(f"/api/orgs/{self.acme.id}/inventory/items/", HTTP_HOST=self._host("acme"))
             retrieve_res = self.client.get(f"/api/orgs/{self.acme.id}/inventory/items/{item.id}/", HTTP_HOST=self._host("acme"))
             create_res = self.client.post(
                 f"/api/orgs/{self.acme.id}/inventory/items/",
-                {"name": "N", "sku": f"N-{user.username}"},
+                {"master_item": str(master_item.id), "name": "N"},
                 format="json",
                 HTTP_HOST=self._host("acme"),
             )
@@ -223,7 +225,7 @@ class RolePolicyTests(APITestCase):
         self._auth(self.staff)
         body_spoof = self.client.post(
             f"/api/orgs/{self.acme.id}/inventory/items/",
-            {"name": "Spoof", "sku": "SPOOF-1", "role": "OWNER"},
+            {"master_item": str(MasterItem.objects.create(name="Spoof", sku="SPOOF-1").id), "name": "Spoof", "role": "OWNER"},
             format="json",
             HTTP_HOST=self._host("acme"),
         )
@@ -233,7 +235,7 @@ class RolePolicyTests(APITestCase):
         token["role"] = "OWNER"
         jwt_spoof = self.client.post(
             f"/api/orgs/{self.acme.id}/inventory/items/",
-            {"name": "Spoof2", "sku": "SPOOF-2"},
+            {"master_item": str(MasterItem.objects.create(name="Spoof2", sku="SPOOF-2").id), "name": "Spoof2"},
             format="json",
             HTTP_HOST=self._host("acme"),
             HTTP_AUTHORIZATION=f"Bearer {str(token)}",
@@ -244,7 +246,7 @@ class RolePolicyTests(APITestCase):
         self._auth(self.staff)
         same_org_forbidden = self.client.post(
             f"/api/orgs/{self.acme.id}/inventory/items/",
-            {"name": "Denied", "sku": "DENIED"},
+            {"master_item": str(MasterItem.objects.create(name="Denied", sku="DENIED").id), "name": "Denied"},
             format="json",
             HTTP_HOST=self._host("acme"),
         )

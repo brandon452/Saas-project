@@ -8,13 +8,21 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import Item, StockLedger, StockOnHand
+from inventory.models import MasterItem, OrgItem, StockLedger, StockOnHand
 from inventory.services import record_stock_movement
 from tenancy.models import Organization, OrganizationMember
 
 
 class StockMovementServiceTests(TransactionTestCase):
     reset_sequences = True
+
+    def _create_org_item(self, organization, name, sku, *, item_name=""):
+        master_item = MasterItem.objects.create(name=name, sku=sku)
+        return OrgItem.objects.for_org(organization).create(
+            organization=organization,
+            master_item=master_item,
+            name=item_name,
+        )
 
     def setUp(self):
         User = get_user_model()
@@ -34,21 +42,9 @@ class StockMovementServiceTests(TransactionTestCase):
             code="OTH",
         )
 
-        self.item = Item.objects.for_org(self.org).create(
-            organization=self.org,
-            name="Lavender Oil",
-            sku="ACME-001",
-        )
-        self.other_item = Item.objects.for_org(self.org).create(
-            organization=self.org,
-            name="Tea Tree Oil",
-            sku="ACME-002",
-        )
-        self.item_other_org = Item.objects.for_org(self.other_org).create(
-            organization=self.other_org,
-            name="Globex Item",
-            sku="GLOBEX-001",
-        )
+        self.item = self._create_org_item(self.org, "Lavender Oil", "ACME-001")
+        self.other_item = self._create_org_item(self.org, "Tea Tree Oil", "ACME-002")
+        self.item_other_org = self._create_org_item(self.other_org, "Globex Item", "GLOBEX-001")
 
     def test_audit_metadata_persistence(self):
         occurred_at = timezone.now() - timezone.timedelta(days=1)
@@ -235,6 +231,14 @@ class StockMovementServiceTests(TransactionTestCase):
 
 
 class StockMovementApiTests(APITestCase):
+    def _create_org_item(self, organization, name, sku, *, item_name=""):
+        master_item = MasterItem.objects.create(name=name, sku=sku)
+        return OrgItem.objects.for_org(organization).create(
+            organization=organization,
+            master_item=master_item,
+            name=item_name,
+        )
+
     def setUp(self):
         User = get_user_model()
         self.user = User.objects.create_user(username="api_user", password="Passw0rd!")
@@ -253,11 +257,7 @@ class StockMovementApiTests(APITestCase):
             code="OTH",
         )
 
-        self.item = Item.objects.for_org(self.org).create(
-            organization=self.org,
-            name="Lavender Oil",
-            sku="ACME-001",
-        )
+        self.item = self._create_org_item(self.org, "Lavender Oil", "ACME-001")
 
     def _url(self):
         return f"/api/orgs/{self.org.id}/inventory/movements/"

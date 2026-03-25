@@ -6,12 +6,20 @@ from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import Item, StockLedger, StockOnHand
+from inventory.models import MasterItem, OrgItem, StockLedger
 from inventory.services import record_stock_movement
 from tenancy.models import Organization, OrganizationMember
 
 
 class InventoryPhase3ApiTests(APITestCase):
+    def _create_org_item(self, organization, name, sku, *, item_name=""):
+        master_item = MasterItem.objects.create(name=name, sku=sku)
+        return OrgItem.objects.for_org(organization).create(
+            organization=organization,
+            master_item=master_item,
+            name=item_name,
+        )
+
     def setUp(self):
         User = get_user_model()
         self.acme_user = User.objects.create_user(username="acme_user", password="Passw0rd!")
@@ -40,21 +48,9 @@ class InventoryPhase3ApiTests(APITestCase):
             code="GLOBEX-MAIN",
         )
 
-        self.acme_item_1 = Item.objects.for_org(self.acme).create(
-            organization=self.acme,
-            name="Acme Item A",
-            sku="ACME-A",
-        )
-        self.acme_item_2 = Item.objects.for_org(self.acme).create(
-            organization=self.acme,
-            name="Acme Item B",
-            sku="ACME-B",
-        )
-        self.globex_item = Item.objects.for_org(self.globex).create(
-            organization=self.globex,
-            name="Globex Item",
-            sku="GLOBEX-A",
-        )
+        self.acme_item_1 = self._create_org_item(self.acme, "Acme Item A", "ACME-A")
+        self.acme_item_2 = self._create_org_item(self.acme, "Acme Item B", "ACME-B")
+        self.globex_item = self._create_org_item(self.globex, "Globex Item", "GLOBEX-A")
 
     def _auth(self, user):
         self.client.force_authenticate(user=user)
@@ -279,6 +275,19 @@ class InventoryPhase3ApiTests(APITestCase):
         self.assertEqual(set(row["branch"].keys()), {"id", "name", "code"})
         self.assertEqual(set(row["item"].keys()), {"id", "name", "sku"})
         self.assertEqual(set(row["performed_by"].keys()), {"id", "username"})
+
+    def test_item_create_uses_master_item_and_preserves_shape(self):
+        self._auth(self.acme_user)
+        master = MasterItem.objects.create(name="Activated By API", sku="API-ACTIVE-1")
+        response = self.client.post(
+            f"/api/orgs/{self.acme.id}/inventory/items/",
+            {"master_item": str(master.id), "name": ""},
+            format="json",
+            HTTP_HOST=self._host("acme"),
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["sku"], "API-ACTIVE-1")
+        self.assertEqual(response.data["name"], "Activated By API")
 
     def test_pagination_shape_on_all_list_endpoints(self):
         self._auth(self.acme_user)

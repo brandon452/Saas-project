@@ -10,7 +10,7 @@ import type { Item } from "@/lib/types/purchase-orders"
 import { formatPOValue } from "@/lib/utils/po"
 
 interface AddLinePayload {
-  itemId: number
+  itemId: string
   itemName: string
   itemSku: string
   ordered_quantity: number
@@ -19,7 +19,7 @@ interface AddLinePayload {
 
 interface POLineAddFormProps {
   orgId: string
-  existingItemIds: number[]
+  existingItemIds: string[]
   onAddLine: (payload: AddLinePayload) => void
   disabled?: boolean
   submitLabel?: string
@@ -71,7 +71,7 @@ export function POLineAddForm({
       return
     }
 
-    if (existingItemIds.includes(selectedItem.id)) {
+    if (existingItemIds.includes(String(selectedItem.id))) {
       setError("This item is already on the purchase order.")
       return
     }

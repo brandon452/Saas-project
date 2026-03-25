@@ -1,15 +1,19 @@
 from rest_framework import serializers
 
+from inventory.models import BranchItem
+from inventory.serializers import ItemSummarySerializer
 from tenancy.models import ParentCompanyMember
 
 from .models import BranchTransfer, BranchTransferLine
 
 
 class BranchTransferLineSerializer(serializers.ModelSerializer):
+    item = ItemSummarySerializer(read_only=True)
+
     class Meta:
         model = BranchTransferLine
         fields = ["id", "item", "quantity_sent", "quantity_received"]
-        read_only_fields = ["id", "quantity_received"]
+        read_only_fields = ["id", "item", "quantity_received"]
 
 
 class BranchTransferLineWriteSerializer(serializers.ModelSerializer):
@@ -26,6 +30,14 @@ class BranchTransferLineWriteSerializer(serializers.ModelSerializer):
         request = self.context["request"]
         if value.organization != request.org:
             raise serializers.ValidationError("Item does not belong to the sending organisation.")
+        branch = getattr(request, "branch", None)
+        if branch is not None:
+            if not BranchItem.objects.filter(
+                org_item=value,
+                branch=branch,
+                is_active=True,
+            ).exists():
+                raise serializers.ValidationError("Item is not enabled at the sending branch.")
         return value
 
 

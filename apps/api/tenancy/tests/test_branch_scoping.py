@@ -6,12 +6,20 @@ from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import Item, StockLedger
+from inventory.models import MasterItem, OrgItem, StockLedger
 from inventory.services import record_stock_movement
 from tenancy.models import Organization, OrganizationMember
 
 
 class BranchScopingTests(APITestCase):
+    def _create_org_item(self, organization, name, sku, *, item_name=""):
+        master_item = MasterItem.objects.create(name=name, sku=sku)
+        return OrgItem.objects.for_org(organization).create(
+            organization=organization,
+            master_item=master_item,
+            name=item_name,
+        )
+
     def setUp(self):
         User = get_user_model()
         self.owner = User.objects.create_user(username="b_owner", password="Passw0rd!")
@@ -39,7 +47,7 @@ class BranchScopingTests(APITestCase):
             assigned_branch=self.branch_a,
         )
 
-        self.item = Item.objects.for_org(self.org).create(organization=self.org, name="Item", sku="ITM-1")
+        self.item = self._create_org_item(self.org, "Item", "ITM-1")
 
         record_stock_movement(
             org=self.org,
@@ -99,7 +107,7 @@ class BranchScopingTests(APITestCase):
         self.assertEqual(stock.status_code, 403)
         self.assertEqual(movements.status_code, 403)
         self.assertEqual(branches.status_code, 403)
-        self.assertEqual(items.status_code, 200)
+        self.assertEqual(items.status_code, 403)
 
     def test_owner_admin_unrestricted_detail_update_with_active_header(self):
         self._auth(self.owner)
@@ -238,7 +246,7 @@ class BranchScopingTests(APITestCase):
         blocked = self.client.get(self._url("inventory/stock/"))
         allowed_items = self.client.get(self._url("inventory/items/"))
         self.assertEqual(blocked.status_code, 403)
-        self.assertEqual(allowed_items.status_code, 200)
+        self.assertEqual(allowed_items.status_code, 403)
 
         self._auth(self.owner)
         owner_ok = self.client.get(self._url("inventory/stock/"))

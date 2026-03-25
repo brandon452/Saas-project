@@ -1,17 +1,55 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError
+from django.db.models import BooleanField, Case, F, IntegerField, OuterRef, Q, Subquery, Value, When
 from drf_spectacular.utils import extend_schema, extend_schema_view
+from rest_framework.decorators import action
 from rest_framework import status, viewsets
-from rest_framework.exceptions import PermissionDenied, ValidationError as DRFValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError as DRFValidationError
 from rest_framework.filters import OrderingFilter, SearchFilter
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
+from branches.models import Branch
 from tenancy.mixins import BranchScopedMixin, OrgScopedViewSetMixin
-from tenancy.permissions import IsOrgOperationalUser, RolePolicyMixin
+from tenancy.models import Organization
+from tenancy.permissions import (
+    IsOrgOperationalUser,
+    IsOrgOwnerOrAdmin,
+    IsParentAdmin,
+    IsParentMember,
+    RolePolicyMixin,
+    get_parent_membership,
+)
 
-from .models import Item, StockLedger, StockOnHand
-from .serializers import ItemSerializer, StockLedgerSerializer, StockMovementSerializer, StockOnHandSerializer
-from .services import record_stock_movement
+from .models import BranchItem, MasterItem, OrgItem, StockLedger, StockOnHand, StockTake, StockTakeLine
+from .serializers import (
+    BranchItemCatalogSerializer,
+    BranchItemCreateSerializer,
+    BranchItemSerializer,
+    MasterItemSerializer,
+    OrgItemCreateSerializer,
+    OrgItemSerializer,
+    OrgMasterItemSerializer,
+    StockLedgerSerializer,
+    StockMovementSerializer,
+    StockOnHandSerializer,
+    StockTakeCreateSerializer,
+    StockTakeDetailSerializer,
+    StockTakeLineSerializer,
+    StockTakeLineUpdateSerializer,
+    StockTakeListSerializer,
+    StockTakeNotesUpdateSerializer,
+)
+from .services import (
+    approve_stock_take,
+    cancel_stock_take,
+    record_stock_movement,
+    reopen_stock_take,
+    start_stock_take,
+    submit_stock_take,
+)
 
 
 @extend_schema_view(
@@ -22,19 +60,24 @@ from .services import record_stock_movement
     update=extend_schema(description="Requires ADMIN or OWNER role."),
     destroy=extend_schema(description="Requires ADMIN or OWNER role."),
 )
-class ItemViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelViewSet):
-    serializer_class = ItemSerializer
-    queryset = Item.all_objects.none()
+class OrgItemViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedMixin, viewsets.ModelViewSet):
+    serializer_class = OrgItemSerializer
+    queryset = OrgItem.all_objects.none()
     permission_resource = "items"
     permission_classes = OrgScopedViewSetMixin.permission_classes + [IsOrgOperationalUser]
 
     filter_backends = [SearchFilter, OrderingFilter]
-    search_fields = ["name", "sku"]
-    ordering_fields = ["name", "sku", "created_at"]
-    ordering = ["name"]
+    search_fields = ["name", "master_item__name", "master_item__sku"]
+    ordering_fields = ["name", "master_item__sku", "created_at"]
+    ordering = ["master_item__name"]
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return OrgItemCreateSerializer
+        return OrgItemSerializer
 
     def get_queryset(self):
-        qs = Item.objects.for_org(self.request.org)
+        qs = OrgItem.objects.for_org(self.request.org).select_related("master_item")
 
         is_active = self.request.query_params.get("is_active")
         if is_active is None:
@@ -42,10 +85,191 @@ class ItemViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelViewSet)
         else:
             qs = qs.filter(is_active=is_active.lower() == "true")
 
+        branch = getattr(self.request, "branch", None)
+        if branch is not None:
+            qs = qs.filter(
+                branch_items__branch=branch,
+                branch_items__is_active=True,
+            )
+
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(organization=self.request.org)
+        serializer.save(organization=self.request.org, is_active=True)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(organization=request.org, is_active=True)
+        output = OrgItemSerializer(instance, context=self.get_serializer_context())
+        headers = self.get_success_headers(output.data)
+        was_reactivated = getattr(serializer, "_existing_inactive", None) is not None
+        status_code = status.HTTP_200_OK if was_reactivated else status.HTTP_201_CREATED
+        return Response(output.data, status=status_code, headers=headers)
+
+    def perform_destroy(self, instance):
+        instance.is_active = False
+        instance.save(update_fields=["is_active"])
+
+
+class MasterItemViewSet(viewsets.ModelViewSet):
+    serializer_class = MasterItemSerializer
+    queryset = MasterItem.objects.all()
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["name", "sku"]
+    ordering_fields = ["name", "sku", "created_at"]
+    ordering = ["name"]
+
+    def get_permissions(self):
+        if self.action in ("list", "retrieve"):
+            return [IsAuthenticated(), IsParentMember()]
+        return [IsAuthenticated(), IsParentAdmin()]
+
+    def perform_destroy(self, instance):
+        instance.is_active = False
+        instance.save(update_fields=["is_active"])
+
+
+class OrgMasterItemView(APIView):
+    permission_classes = [IsAuthenticated, IsOrgOwnerOrAdmin]
+
+    def initial(self, request, *args, **kwargs):
+        org_id = self.kwargs.get("org_id")
+        try:
+            request.org = Organization.objects.get(pk=org_id, is_active=True)
+        except Organization.DoesNotExist:
+            raise NotFound("Organization not found.")
+
+        parent_membership = get_parent_membership(request)
+        request.parent_role = parent_membership.role if parent_membership else None
+        super().initial(request, *args, **kwargs)
+
+    def get(self, request, org_id=None, *args, **kwargs):
+        activated_master_ids = OrgItem.objects.filter(
+            organization=request.org,
+        ).values_list("master_item_id", flat=True)
+
+        available = MasterItem.objects.filter(
+            is_active=True,
+        ).exclude(
+            id__in=activated_master_ids,
+        ).order_by("name")
+
+        serializer = OrgMasterItemSerializer(available, many=True)
+        return Response(serializer.data)
+
+
+class BranchItemCatalogView(APIView):
+    permission_classes = [IsAuthenticated, IsOrgOwnerOrAdmin]
+
+    def initial(self, request, *args, **kwargs):
+        org_id = self.kwargs.get("org_id")
+        try:
+            request.org = Organization.objects.get(pk=org_id, is_active=True)
+        except Organization.DoesNotExist:
+            raise NotFound("Organization not found.")
+
+        parent_membership = get_parent_membership(request)
+        request.parent_role = parent_membership.role if parent_membership else None
+        super().initial(request, *args, **kwargs)
+
+    def get(self, request, org_id=None, *args, **kwargs):
+        branch_id = request.query_params.get("branch")
+        if not branch_id:
+            raise DRFValidationError({"branch": "This field is required."})
+
+        try:
+            branch = Branch.objects.get(pk=branch_id, organization=request.org)
+        except Branch.DoesNotExist:
+            raise DRFValidationError(
+                {"branch": "Branch not found or does not belong to this organisation."}
+            )
+
+        branch_item_subquery = BranchItem.objects.filter(
+            org_item=OuterRef("pk"),
+            branch=branch,
+            is_active=True,
+        ).values("id")[:1]
+
+        queryset = (
+            OrgItem.objects.for_org(request.org)
+            .filter(is_active=True)
+            .select_related("master_item")
+            .annotate(
+                branch_item_id=Subquery(
+                    branch_item_subquery,
+                    output_field=IntegerField(),
+                )
+            )
+            .annotate(
+                is_enabled=Case(
+                    When(branch_item_id__isnull=False, then=Value(True)),
+                    default=Value(False),
+                    output_field=BooleanField(),
+                )
+            )
+            .order_by("master_item__name")
+        )
+
+        search = request.query_params.get("search", "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search)
+                | Q(master_item__name__icontains=search)
+                | Q(master_item__sku__icontains=search)
+            )
+
+        paginator = PageNumberPagination()
+        paginator.page_size = 50
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        serializer = BranchItemCatalogSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+
+class BranchItemViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelViewSet):
+    serializer_class = BranchItemSerializer
+    queryset = BranchItem.objects.none()
+    permission_resource = "branch_items"
+    permission_classes = OrgScopedViewSetMixin.permission_classes + [IsOrgOperationalUser]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = [
+        "org_item__name",
+        "org_item__master_item__name",
+        "org_item__master_item__sku",
+    ]
+    ordering_fields = ["org_item__master_item__name", "created_at"]
+    ordering = ["org_item__master_item__name"]
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return BranchItemCreateSerializer
+        return BranchItemSerializer
+
+    def get_queryset(self):
+        qs = BranchItem.objects.filter(
+            org_item__organization=self.request.org,
+        ).select_related(
+            "org_item__master_item",
+            "branch",
+        )
+        branch_id = self.request.query_params.get("branch")
+        if branch_id:
+            qs = qs.filter(branch_id=branch_id)
+        is_active = self.request.query_params.get("is_active")
+        if is_active is None:
+            qs = qs.filter(is_active=True)
+        else:
+            qs = qs.filter(is_active=is_active.lower() == "true")
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save()
+        out = BranchItemSerializer(instance, context=self.get_serializer_context())
+        was_reactivated = getattr(serializer, "_existing_inactive", None) is not None
+        status_code = status.HTTP_200_OK if was_reactivated else status.HTTP_201_CREATED
+        return Response(out.data, status=status_code)
 
     def perform_destroy(self, instance):
         instance.is_active = False
@@ -62,11 +286,11 @@ class StockOnHandViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedMix
     permission_resource = "stock_on_hand"
 
     filter_backends = [OrderingFilter]
-    ordering_fields = ["quantity", "item__name", "branch__name"]
-    ordering = ["item__name"]
+    ordering_fields = ["quantity", "item__name", "item__master_item__name", "branch__name"]
+    ordering = ["item__master_item__name"]
 
     def get_queryset(self):
-        qs = StockOnHand.objects.for_org(self.request.org).select_related("branch", "item")
+        qs = StockOnHand.objects.for_org(self.request.org).select_related("branch", "item__master_item")
 
         if self.request.branch:
             qs = qs.filter(branch=self.request.branch)
@@ -101,6 +325,16 @@ class StockMovementViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedM
     ordering_fields = ["occurred_at", "created_at"]
     ordering = ["-occurred_at"]
 
+    def filter_queryset(self, queryset):
+        qs = super().filter_queryset(queryset)
+        ordering_param = self.request.query_params.get("ordering", "")
+        field = ordering_param.lstrip("-")
+        if field == "occurred_at" or not ordering_param:
+            desc = not ordering_param or ordering_param.startswith("-")
+            expr = F("occurred_at").desc(nulls_last=True) if desc else F("occurred_at").asc(nulls_last=True)
+            return qs.order_by(expr, "-created_at" if desc else "created_at")
+        return qs
+
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
         if self.action == "create":
@@ -118,7 +352,7 @@ class StockMovementViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedM
         return StockLedgerSerializer
 
     def get_queryset(self):
-        qs = StockLedger.objects.for_org(self.request.org).select_related("branch", "item", "performed_by")
+        qs = StockLedger.objects.for_org(self.request.org).select_related("branch", "item__master_item", "performed_by")
 
         if self.request.branch:
             qs = qs.filter(branch=self.request.branch)
@@ -188,3 +422,101 @@ class StockMovementViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedM
         out = StockLedgerSerializer(ledger, context={"request": request})
         status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
         return Response(out.data, status=status_code)
+
+
+class StockTakeViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelViewSet):
+    permission_resource = "stock_takes"
+    queryset = StockTake.all_objects.none()
+    permission_classes = OrgScopedViewSetMixin.permission_classes + [IsOrgOperationalUser]
+    filter_backends = [OrderingFilter]
+    ordering = ["-created_at"]
+    http_method_names = ["get", "post", "patch", "head", "options"]
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return StockTakeCreateSerializer
+        if self.action == "partial_update":
+            return StockTakeNotesUpdateSerializer
+        if self.action == "retrieve":
+            return StockTakeDetailSerializer
+        return StockTakeListSerializer
+
+    def get_queryset(self):
+        queryset = StockTake.objects.for_org(self.request.org).select_related(
+            "branch",
+            "created_by",
+            "started_by",
+            "submitted_by",
+            "approved_by",
+            "cancelled_by",
+        )
+        if self.action == "retrieve":
+            queryset = queryset.prefetch_related("lines__org_item__master_item")
+        return queryset
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs["partial"] = True
+        return super().partial_update(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(
+            organization=self.request.org,
+            created_by=self.request.user,
+        )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        output = StockTakeDetailSerializer(serializer.instance, context={"request": request})
+        return Response(output.data, status=status.HTTP_201_CREATED)
+
+    def _run_transition(self, request, service_fn):
+        stock_take = self.get_object()
+        try:
+            service_fn(stock_take, performed_by=request.user)
+        except DjangoValidationError as exc:
+            raise DRFValidationError({"detail": exc.messages})
+
+        stock_take.refresh_from_db()
+        return Response(StockTakeDetailSerializer(stock_take, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], url_path="start")
+    def start(self, request, *args, **kwargs):
+        return self._run_transition(request, start_stock_take)
+
+    @action(detail=True, methods=["post"], url_path="submit")
+    def submit(self, request, *args, **kwargs):
+        return self._run_transition(request, submit_stock_take)
+
+    @action(detail=True, methods=["post"], url_path="reopen")
+    def reopen(self, request, *args, **kwargs):
+        return self._run_transition(request, reopen_stock_take)
+
+    @action(detail=True, methods=["post"], url_path="approve")
+    def approve(self, request, *args, **kwargs):
+        return self._run_transition(request, approve_stock_take)
+
+    @action(detail=True, methods=["post"], url_path="cancel")
+    def cancel(self, request, *args, **kwargs):
+        return self._run_transition(request, cancel_stock_take)
+
+    @action(detail=True, methods=["get"], url_path="lines")
+    def lines(self, request, *args, **kwargs):
+        stock_take = self.get_object()
+        queryset = stock_take.lines.select_related("org_item__master_item").all()
+        serializer = StockTakeLineSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["patch"], url_path=r"lines/(?P<line_pk>[0-9]+)")
+    def update_line(self, request, line_pk=None, *args, **kwargs):
+        stock_take = self.get_object()
+        try:
+            line = stock_take.lines.select_related("stock_take", "org_item__master_item").get(pk=line_pk)
+        except StockTakeLine.DoesNotExist:
+            raise NotFound("Line not found.")
+
+        serializer = StockTakeLineUpdateSerializer(line, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(StockTakeLineSerializer(line, context={"request": request}).data)
