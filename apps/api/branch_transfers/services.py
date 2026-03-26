@@ -51,18 +51,26 @@ def dispatch_transfer(transfer, performed_by):
         raise ValidationError("Cannot dispatch a transfer with no lines.")
 
     for line in lines:
-        record_stock_movement(
-            org=transfer.organization,
-            item=line.item,
-            branch=transfer.from_branch,
-            quantity=-line.quantity_sent,
-            movement_type=StockLedger.MOVEMENT_ISSUE,
-            performed_by=performed_by,
-        )
+        try:
+            record_stock_movement(
+                org=transfer.organization,
+                item=line.item,
+                branch=transfer.from_branch,
+                quantity=-line.quantity_sent,
+                movement_type=StockLedger.MOVEMENT_ISSUE,
+                performed_by=performed_by,
+            )
+        except ValidationError as exc:
+            sku = line.item.master_item.sku
+            name = line.item.display_name
+            raise ValidationError(
+                f"Cannot dispatch line for {sku} ({name}): " + " ".join(exc.messages)
+            )
 
     transfer.status = BranchTransfer.IN_TRANSIT
+    transfer.dispatched_by = performed_by
     transfer.dispatched_at = timezone.now()
-    transfer.save(update_fields=["status", "dispatched_at", "updated_at"])
+    transfer.save(update_fields=["status", "dispatched_by", "dispatched_at", "updated_at"])
 
 
 @transaction.atomic

@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python manage.py makemigrations inventory --name stock_take_audit_fields)",
+      "Bash(python manage.py test inventory.tests.test_stock_takes inventory.tests.test_stock_take_bulk_update inventory.tests.test_stock_take_status_improvements --verbosity=1 --keepdb)",
+      "Bash(python manage.py showmigrations)",
+      "Bash(python manage.py migrate)",
+      "Bash(python manage.py makemigrations inventory --name add_completed_with_variances_status)",
+      "Bash(python manage.py showmigrations --plan)",
+      "Bash(python manage.py test inventory.tests.test_movements --verbosity=2)",
+      "Bash(python manage.py test inventory.tests.test_movements --verbosity=2 --keepdb)",
+      "Bash(find 'c:\\\\Users\\\\Admin\\\\Documents\\\\Saas project' -type f -path *branch_transfers*)",
+      "Bash(python manage.py migrate branch_transfers --run-syncdb)",
+      "Bash(python manage.py migrate branch_transfers)",
+      "Bash(python manage.py test branch_transfers --verbosity=2 --keepdb)",
+      "Bash(find 'c:/Users/Admin/Documents/Saas project' -path *apps/api/purchase_orders* -type f)",
+      "Bash(find 'c:/Users/Admin/Documents/Saas project' -path *apps/web* -name *purchase* -type f)",
+      "Bash(find 'c:/Users/Admin/Documents/Saas project' -path *tenancy* -name *.py -type f)"
+    ]
+  }
+}

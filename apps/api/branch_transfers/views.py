@@ -76,6 +76,7 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
                     "organization",
                     "created_by",
                     "approved_by",
+                    "dispatched_by",
                     "received_by",
                 )
                 .prefetch_related("lines__item__master_item")
@@ -83,7 +84,8 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
             )
 
         org = self.request.org
-        return (
+        params = self.request.query_params
+        qs = (
             BranchTransfer.all_objects
             .filter(Q(organization=org) | Q(to_organization=org))
             .select_related(
@@ -93,11 +95,26 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
                 "organization",
                 "created_by",
                 "approved_by",
+                "dispatched_by",
                 "received_by",
             )
             .prefetch_related("lines__item__master_item")
             .distinct()
         )
+
+        status_filter = params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        from_branch = params.get("from_branch")
+        if from_branch:
+            qs = qs.filter(from_branch_id=from_branch)
+
+        to_branch = params.get("to_branch")
+        if to_branch:
+            qs = qs.filter(to_branch_id=to_branch)
+
+        return qs
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -132,6 +149,7 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
             )
 
     @action(detail=True, methods=["post"], url_path="approve")
+    @transaction.atomic
     def approve(self, request, *args, **kwargs):
         transfer = self.get_object()
 
@@ -142,6 +160,7 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        transfer = BranchTransfer.objects.select_for_update().get(pk=transfer.pk)
         if not transfer.can_transition_to(BranchTransfer.APPROVED):
             return Response(
                 {"detail": f"Cannot approve a transfer with status {transfer.status}."},

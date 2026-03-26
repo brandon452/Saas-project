@@ -153,13 +153,14 @@ class StockTake(TenantModel):
     Notes editable in DRAFT and IN_PROGRESS only via PATCH.
     No PUT - PATCH only.
     Adjustments posted on approval using current live StockOnHand quantities.
-    Multiple concurrent stock takes per branch are allowed.
+    Only one IN_PROGRESS stock take is permitted per branch at a time.
     """
 
     DRAFT = "DRAFT"
     IN_PROGRESS = "IN_PROGRESS"
     PENDING_APPROVAL = "PENDING_APPROVAL"
     COMPLETED = "COMPLETED"
+    COMPLETED_WITH_VARIANCES = "COMPLETED_WITH_VARIANCES"
     CANCELLED = "CANCELLED"
 
     STATUS_CHOICES = [
@@ -167,14 +168,16 @@ class StockTake(TenantModel):
         (IN_PROGRESS, "In Progress"),
         (PENDING_APPROVAL, "Pending Approval"),
         (COMPLETED, "Completed"),
+        (COMPLETED_WITH_VARIANCES, "Completed with Variances"),
         (CANCELLED, "Cancelled"),
     ]
 
     VALID_TRANSITIONS = {
         DRAFT: {IN_PROGRESS, CANCELLED},
         IN_PROGRESS: {PENDING_APPROVAL, CANCELLED},
-        PENDING_APPROVAL: {IN_PROGRESS, COMPLETED, CANCELLED},
+        PENDING_APPROVAL: {IN_PROGRESS, COMPLETED, COMPLETED_WITH_VARIANCES, CANCELLED},
         COMPLETED: set(),
+        COMPLETED_WITH_VARIANCES: set(),
         CANCELLED: set(),
     }
     EDITABLE_STATUSES = {DRAFT, IN_PROGRESS}
@@ -186,7 +189,7 @@ class StockTake(TenantModel):
         related_name="stock_takes",
     )
     status = models.CharField(
-        max_length=20,
+        max_length=30,
         choices=STATUS_CHOICES,
         default=DRAFT,
     )
@@ -226,10 +229,23 @@ class StockTake(TenantModel):
         on_delete=models.SET_NULL,
         related_name="cancelled_stock_takes",
     )
+    reopened_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reopened_stock_takes",
+    )
     started_at = models.DateTimeField(null=True, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     approved_at = models.DateTimeField(null=True, blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
+    reopened_at = models.DateTimeField(null=True, blank=True)
+    snapshot_taken_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When snapshot quantities were captured. Not updated on reopen.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -242,7 +258,9 @@ class StockTake(TenantModel):
                 raise ValidationError("Branch must belong to the same organisation as this stock take.")
 
     def save(self, *args, **kwargs):
-        self.full_clean()
+        update_fields = kwargs.get("update_fields")
+        if update_fields is None or "branch" in update_fields or "organization" in update_fields:
+            self.full_clean()
         return super().save(*args, **kwargs)
 
     def can_transition_to(self, new_status):

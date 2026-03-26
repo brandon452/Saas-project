@@ -17,3 +17,14 @@ export interface EnableBranchItemPayload {
   org_item: string
   branch: string
 }
+
+export interface BulkActivatePayload {
+  branch: string
+  org_items: string[]
+}
+
+export interface BulkActivateResponse {
+  activated: number
+  already_active: number
+  total: number
+}

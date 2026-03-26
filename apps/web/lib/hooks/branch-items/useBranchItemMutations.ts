@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 
 import { apiRequest } from "@/lib/api"
 import { getCsrfHeader } from "@/lib/csrf"
-import type { EnableBranchItemPayload } from "@/lib/types/branch-items"
+import type { BulkActivatePayload, BulkActivateResponse, EnableBranchItemPayload } from "@/lib/types/branch-items"
 
 export function useBranchItemMutations(orgId: string, branchId: string) {
   const queryClient = useQueryClient()
@@ -41,5 +41,22 @@ export function useBranchItemMutations(orgId: string, branchId: string) {
     },
   })
 
-  return { enableBranchItem, disableBranchItem }
+  const bulkActivateBranchItems = useMutation({
+    mutationFn: (payload: BulkActivatePayload) =>
+      apiRequest<BulkActivateResponse>(
+        `orgs/${orgId}/branch-items/bulk-activate/`,
+        {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify(payload),
+        },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["branch-catalog", orgId, branchId],
+      })
+    },
+  })
+
+  return { enableBranchItem, disableBranchItem, bulkActivateBranchItems }
 }

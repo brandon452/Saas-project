@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find 'c:/Users/Admin/Documents/Saas project/apps/web' -name *po* -type f ! -path */node_modules/*)",
+      "Bash(grep -E \"\\\\.\\(ts|tsx|js\\)$\")",
+      "Bash(find 'c:/Users/Admin/Documents/Saas project/apps/api/goods_receipts' -name *.py ! -path */__pycache__/* -type f)",
+      "Bash(grep -r \"PurchaseOrder\\\\|purchase_order\" 'c:/Users/Admin/Documents/Saas project/apps/api/goods_receipts' --include=*.py)",
+      "Bash(python manage.py test purchase_orders.tests.test_purchase_orders.PurchaseOrderApiTests.test_list_filters --keepdb)",
+      "Bash(python manage.py test purchase_orders.tests.test_purchase_orders.PurchaseOrderApiTests.test_submit_rules_and_permissions purchase_orders.tests.test_purchase_orders.PurchaseOrderApiTests.test_cancel_rules_and_permissions --keepdb)",
+      "Bash(python manage.py test purchase_orders.tests.test_purchase_orders.PurchaseOrderApiTests.test_valid_transitions_state_machine --keepdb)",
+      "Bash(python manage.py test purchase_orders.tests.test_purchase_orders.PurchaseOrderApiTests.test_update_line_rules --keepdb)",
+      "Bash(python manage.py test purchase_orders --verbosity=2 --keepdb)",
+      "Bash(python manage.py test inventory.tests.test_stock_takes inventory.tests.test_stock_take_bulk_update inventory.tests.test_stock_take_status_improvements --keepdb)",
+      "Bash(python manage.py test branch_transfers --verbosity=1)",
+      "Bash(python manage.py test branch_transfers --verbosity=1 --keepdb)",
+      "Bash(python manage.py test inventory --verbosity=1 --keepdb)",
+      "Bash(python -m pytest inventory/tests/ -x -q --no-header)",
+      "Bash(python manage.py test inventory.tests.test_stock_takes --verbosity=1 --keepdb)",
+      "Bash(python manage.py test inventory --verbosity=2 --keepdb)",
+      "Bash(python manage.py test inventory.tests.test_phase3_api.InventoryPhase3ApiTests.test_movement_get_filters_ordering_and_pagination --verbosity=2 --keepdb)"
+    ]
+  }
+}

@@ -26,6 +26,8 @@ export function getStockTakeStatusTone(
       return "outline"
     case "COMPLETED":
       return "secondary"
+    case "COMPLETED_WITH_VARIANCES":
+      return "default"
     case "CANCELLED":
       return "destructive"
     default:

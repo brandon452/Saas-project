@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Loader2, X } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -46,6 +46,17 @@ export default function StockAdjustmentsPage() {
   const [successMessage, setSuccessMessage] = useState("")
   const [pendingIdempotencyKey, setPendingIdempotencyKey] = useState<string | null>(null)
   const [resultsOpen, setResultsOpen] = useState(false)
+  const itemSearchRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (itemSearchRef.current && !itemSearchRef.current.contains(event.target as Node)) {
+        setResultsOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
 
   const resolvedBranchId = isStaff ? staffBranchId : selectedBranchId
   const isBranchResolved = !!resolvedBranchId
@@ -214,7 +225,7 @@ export default function StockAdjustmentsPage() {
 
           <div className="space-y-2">
             <Label htmlFor="adjustment-item-search">Item</Label>
-            <div className="relative">
+            <div className="relative" ref={itemSearchRef}>
               <Input
                 id="adjustment-item-search"
                 value={itemInput}

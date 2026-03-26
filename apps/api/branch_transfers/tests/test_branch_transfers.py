@@ -321,6 +321,7 @@ class BranchTransferApiTests(APITestCase):
         transfer.refresh_from_db()
         self.assertEqual(transfer.status, BranchTransfer.IN_TRANSIT)
         self.assertIsNotNone(transfer.dispatched_at)
+        self.assertEqual(transfer.dispatched_by, self.sender_owner)
         self.assertEqual(mocked_record.call_count, 2)
         self.assertEqual(mocked_record.call_args_list[0].kwargs["movement_type"], StockLedger.MOVEMENT_ISSUE)
         self.assertEqual(mocked_record.call_args_list[0].kwargs["branch"], self.acme_from_branch)
@@ -546,16 +547,28 @@ class BranchTransferApiTests(APITestCase):
             transfer.refresh_from_db()
             self.assertEqual(transfer.status, BranchTransfer.CANCELLED)
 
-        for user in (self.sender_admin, self.receiver_owner):
-            transfer = self._make_transfer(status=BranchTransfer.DRAFT)
-            self._auth(user)
-            response = self.client.post(
-                self._detail_url(self.acme.id if user == self.sender_admin else self.globex.id, transfer.id, "cancel/"),
-                {},
-                format="json",
-                HTTP_HOST=self._host(self.acme.slug if user == self.sender_admin else self.globex.slug),
-            )
-            self.assertEqual(response.status_code, 403)
+        # sender_admin can now cancel; receiver_owner still cannot
+        transfer_admin = self._make_transfer(status=BranchTransfer.DRAFT)
+        self._auth(self.sender_admin)
+        admin_cancel = self.client.post(
+            self._detail_url(self.acme.id, transfer_admin.id, "cancel/"),
+            {},
+            format="json",
+            HTTP_HOST=self._host(self.acme.slug),
+        )
+        self.assertEqual(admin_cancel.status_code, 200)
+        transfer_admin.refresh_from_db()
+        self.assertEqual(transfer_admin.status, BranchTransfer.CANCELLED)
+
+        transfer_recv = self._make_transfer(status=BranchTransfer.DRAFT)
+        self._auth(self.receiver_owner)
+        receiver_cancel = self.client.post(
+            self._detail_url(self.globex.id, transfer_recv.id, "cancel/"),
+            {},
+            format="json",
+            HTTP_HOST=self._host(self.globex.slug),
+        )
+        self.assertEqual(receiver_cancel.status_code, 403)
 
         for status_value in (
             BranchTransfer.IN_TRANSIT,

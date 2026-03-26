@@ -127,6 +127,7 @@ export default function BranchTransferDetailPage() {
     try {
       setActionError("")
       await approveTransfer.mutateAsync()
+      setApproveDialogOpen(false)
       await transferQuery.refetch()
     } catch (error) {
       setActionError(error instanceof Error && error.message.includes("403") ? "You do not have permission to approve this transfer." : "Failed to approve the transfer.")
@@ -137,6 +138,7 @@ export default function BranchTransferDetailPage() {
     try {
       setActionError("")
       await dispatchTransfer.mutateAsync()
+      setDispatchDialogOpen(false)
       await transferQuery.refetch()
     } catch (error) {
       setActionError(error instanceof Error && error.message.includes("403") ? "You do not have permission to dispatch this transfer." : "Failed to dispatch the transfer.")
@@ -147,6 +149,7 @@ export default function BranchTransferDetailPage() {
     try {
       setActionError("")
       await cancelTransfer.mutateAsync()
+      setCancelDialogOpen(false)
       await transferQuery.refetch()
     } catch (error) {
       setActionError(error instanceof Error && error.message.includes("403") ? "You do not have permission to cancel this transfer." : "Failed to cancel the transfer.")
@@ -195,6 +198,7 @@ export default function BranchTransferDetailPage() {
           <p>To Org: {branchMap.get(transfer.to_branch)?.org_name ?? "\u2014"}</p>
           <p>Created: {new Date(transfer.created_at).toLocaleString()}</p>
           <p>Dispatched: {formatMaybeDate(transfer.dispatched_at)}</p>
+          <p>Dispatched by: {transfer.dispatched_by?.username ?? "\u2014"}</p>
           <p>Received: {formatMaybeDate(transfer.received_at)}</p>
           <p>Notes: {transfer.notes.trim() || "\u2014"}</p>
           {transfer.status === "RECEIVED_COMPLETE" || transfer.status === "RECEIVED_WITH_VARIANCE" ? (

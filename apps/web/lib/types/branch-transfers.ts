@@ -1,3 +1,8 @@
+export interface TransferUser {
+  id: number
+  username: string
+}
+
 export type TransferStatus =
   | "DRAFT"
   | "APPROVED"
@@ -31,10 +36,11 @@ export interface BranchTransfer {
   notes: string
   receive_notes: string
   lines: BranchTransferLine[]
-  created_by: string | null
-  approved_by: string | null
+  created_by: TransferUser | null
+  approved_by: TransferUser | null
+  dispatched_by: TransferUser | null
   dispatched_at: string | null
-  received_by: string | null
+  received_by: TransferUser | null
   received_at: string | null
   created_at: string
   updated_at: string

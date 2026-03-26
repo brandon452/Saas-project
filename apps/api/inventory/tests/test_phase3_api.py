@@ -172,7 +172,7 @@ class InventoryPhase3ApiTests(APITestCase):
                 branch=self.acme_branch if i % 2 == 0 else self.acme_branch_2,
                 item=self.acme_item_1 if i % 3 == 0 else self.acme_item_2,
                 quantity=Decimal("1.0000"),
-                movement_type="RECEIPT" if i % 2 == 0 else "ISSUE",
+                movement_type="RECEIPT" if i % 2 == 0 else "ADJUSTMENT",
                 performed_by=self.acme_user,
                 reference_type="PO" if i % 2 == 0 else "SO",
                 reference_id=f"ref-{i}",

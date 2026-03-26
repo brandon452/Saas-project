@@ -33,10 +33,13 @@ export function StockTakeLinesTable({
   lines,
   onSaved,
 }: StockTakeLinesTableProps) {
-  const { updateStockTakeLine } = useStockTakeMutations(orgId)
+  const { updateStockTakeLine, bulkUpdateStockTakeLines } = useStockTakeMutations(orgId)
   const [drafts, setDrafts] = useState<DraftMap>({})
   const [rowError, setRowError] = useState("")
   const [activeLineId, setActiveLineId] = useState<number | null>(null)
+  const [pendingCounts, setPendingCounts] = useState<Record<number, string | null>>({})
+
+  const isDirty = Object.keys(pendingCounts).length > 0
 
   useEffect(() => {
     const nextDrafts: DraftMap = {}
@@ -46,6 +49,12 @@ export function StockTakeLinesTable({
     setDrafts(nextDrafts)
     setRowError("")
   }, [lines])
+
+  useEffect(() => {
+    if (status !== "IN_PROGRESS") {
+      setPendingCounts({})
+    }
+  }, [status])
 
   const editable = useMemo(() => canEditLines(status), [status])
 
@@ -83,8 +92,40 @@ export function StockTakeLinesTable({
     }
   }
 
+  async function handleBulkSave() {
+    if (!isDirty) return
+    const bulkLines = Object.entries(pendingCounts).map(([id, val]) => ({
+      id: Number(id),
+      counted_quantity: val === "" || val === null ? null : val,
+    }))
+    try {
+      await bulkUpdateStockTakeLines.mutateAsync({ stockTakeId, payload: { lines: bulkLines } })
+      setPendingCounts({})
+      await onSaved()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ""
+      if (message.includes("403")) {
+        setRowError("You do not have permission to update counted quantities.")
+      } else if (message.includes("400")) {
+        setRowError("Could not save counted quantities.")
+      } else {
+        setRowError(message || "Failed to save counted quantities.")
+      }
+    }
+  }
+
   return (
     <div className="space-y-3">
+      {status === "IN_PROGRESS" ? (
+        <div className="flex justify-end">
+          <Button
+            disabled={!isDirty || bulkUpdateStockTakeLines.isPending}
+            onClick={() => void handleBulkSave()}
+          >
+            {bulkUpdateStockTakeLines.isPending ? "Saving..." : "Save All"}
+          </Button>
+        </div>
+      ) : null}
       <Table>
         <TableHeader>
           <TableRow>
@@ -94,6 +135,7 @@ export function StockTakeLinesTable({
             <TableHead>Counted Qty</TableHead>
             <TableHead>Variance</TableHead>
             {editable ? <TableHead className="w-44">Actions</TableHead> : null}
+            {status === "IN_PROGRESS" ? <TableHead className="w-40">Bulk Count</TableHead> : null}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -143,6 +185,26 @@ export function StockTakeLinesTable({
                         Clear
                       </Button>
                     </div>
+                  </TableCell>
+                ) : null}
+                {status === "IN_PROGRESS" ? (
+                  <TableCell>
+                    <Input
+                      value={
+                        line.id in pendingCounts
+                          ? (pendingCounts[line.id] ?? "")
+                          : (line.counted_quantity ?? "")
+                      }
+                      onChange={(event) =>
+                        setPendingCounts((current) => ({
+                          ...current,
+                          [line.id]: event.target.value,
+                        }))
+                      }
+                      disabled={bulkUpdateStockTakeLines.isPending}
+                      inputMode="decimal"
+                      placeholder="Bulk count"
+                    />
                   </TableCell>
                 ) : null}
               </TableRow>

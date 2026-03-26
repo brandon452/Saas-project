@@ -29,12 +29,40 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
         raise MethodNotAllowed("DELETE")
 
     def get_queryset(self):
-        return (
+        qs = (
             PurchaseOrder.objects
             .for_org(self.request.org)
             .select_related("supplier", "branch", "created_by")
             .prefetch_related("lines__item__master_item", "receipts__lines")
         )
+
+        params = self.request.query_params
+
+        status_filter = params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        supplier_id = params.get("supplier")
+        if supplier_id:
+            qs = qs.filter(supplier_id=supplier_id)
+
+        branch_id = params.get("branch")
+        if branch_id:
+            qs = qs.filter(branch_id=branch_id)
+
+        search = params.get("search")
+        if search:
+            qs = qs.filter(po_number__icontains=search)
+
+        created_at_after = params.get("created_at_after")
+        if created_at_after:
+            qs = qs.filter(created_at__date__gte=created_at_after)
+
+        created_at_before = params.get("created_at_before")
+        if created_at_before:
+            qs = qs.filter(created_at__date__lte=created_at_before)
+
+        return qs
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -54,8 +82,10 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
         )
 
     @action(detail=True, methods=["post"], url_path="submit")
+    @transaction.atomic
     def submit(self, request, *args, **kwargs):
         po = self.get_object()
+        po = PurchaseOrder.objects.select_for_update().get(pk=po.pk)
 
         if not po.can_transition_to(PurchaseOrder.SUBMITTED):
             return Response(
@@ -74,8 +104,10 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
         return Response(PurchaseOrderSerializer(po).data)
 
     @action(detail=True, methods=["post"], url_path="cancel")
+    @transaction.atomic
     def cancel(self, request, *args, **kwargs):
         po = self.get_object()
+        po = PurchaseOrder.objects.select_for_update().get(pk=po.pk)
 
         if not po.can_transition_to(PurchaseOrder.CANCELLED):
             return Response(
@@ -139,7 +171,7 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(PurchaseOrderLineSerializer(line).data)
+        return Response(PurchaseOrderLineSerializer(serializer.instance).data)
 
     @action(detail=True, methods=["delete"], url_path=r"lines/(?P<line_id>[^/.]+)/remove")
     def remove_line(self, request, line_id=None, *args, **kwargs):

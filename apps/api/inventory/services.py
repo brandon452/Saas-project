@@ -34,6 +34,11 @@ def record_stock_movement(
     if quantity == 0:
         raise ValidationError("Movement quantity cannot be zero.")
 
+    if movement_type == StockLedger.MOVEMENT_RECEIPT and quantity < 0:
+        raise ValidationError("RECEIPT quantity must be positive.")
+    if movement_type == StockLedger.MOVEMENT_ISSUE and quantity > 0:
+        raise ValidationError("ISSUE quantity must be negative.")
+
     if idempotency_key is not None:
         existing = StockLedger.objects.for_org(org).filter(idempotency_key=idempotency_key).first()
         if existing:
@@ -110,6 +115,16 @@ def start_stock_take(stock_take, performed_by):
     if not stock_take.can_transition_to(StockTake.IN_PROGRESS):
         raise ValidationError(f"Cannot start a stock take with status {stock_take.status}.")
 
+    if StockTake.objects.filter(
+        organization=stock_take.organization,
+        branch=stock_take.branch,
+        status=StockTake.IN_PROGRESS,
+    ).exclude(pk=stock_take.pk).exists():
+        raise ValidationError(
+            "A stock take is already in progress for this branch. "
+            "Complete or cancel it before starting a new one."
+        )
+
     branch_items = (
         BranchItem.objects.filter(
             branch=stock_take.branch,
@@ -143,10 +158,12 @@ def start_stock_take(stock_take, performed_by):
     ]
     StockTakeLine.objects.bulk_create(lines)
 
+    now = timezone.now()
     stock_take.status = StockTake.IN_PROGRESS
     stock_take.started_by = performed_by
-    stock_take.started_at = timezone.now()
-    stock_take.save(update_fields=["status", "started_by", "started_at", "updated_at"])
+    stock_take.started_at = now
+    stock_take.snapshot_taken_at = now
+    stock_take.save(update_fields=["status", "started_by", "started_at", "snapshot_taken_at", "updated_at"])
 
 
 @transaction.atomic
@@ -173,8 +190,6 @@ def submit_stock_take(stock_take, performed_by):
 
 @transaction.atomic
 def reopen_stock_take(stock_take, performed_by):
-    del performed_by
-
     if not stock_take.can_transition_to(StockTake.IN_PROGRESS):
         raise ValidationError(f"Cannot reopen a stock take with status {stock_take.status}.")
 
@@ -185,7 +200,9 @@ def reopen_stock_take(stock_take, performed_by):
     stock_take.status = StockTake.IN_PROGRESS
     stock_take.submitted_by = None
     stock_take.submitted_at = None
-    stock_take.save(update_fields=["status", "submitted_by", "submitted_at", "updated_at"])
+    stock_take.reopened_by = performed_by
+    stock_take.reopened_at = timezone.now()
+    stock_take.save(update_fields=["status", "submitted_by", "submitted_at", "reopened_by", "reopened_at", "updated_at"])
 
 
 @transaction.atomic
@@ -210,6 +227,7 @@ def approve_stock_take(stock_take, performed_by):
         )
     }
 
+    any_adjustments = False
     for line in lines:
         if line.counted_quantity is None:
             continue
@@ -219,18 +237,28 @@ def approve_stock_take(stock_take, performed_by):
         if adjustment == 0:
             continue
 
-        record_stock_movement(
-            org=stock_take.organization,
-            branch=stock_take.branch,
-            item=line.org_item,
-            quantity=adjustment,
-            movement_type=StockLedger.MOVEMENT_ADJUSTMENT,
-            performed_by=performed_by,
-            reference_type="STOCK_TAKE",
-            reference_id=str(stock_take.id),
-        )
+        any_adjustments = True
+        try:
+            record_stock_movement(
+                org=stock_take.organization,
+                branch=stock_take.branch,
+                item=line.org_item,
+                quantity=adjustment,
+                movement_type=StockLedger.MOVEMENT_ADJUSTMENT,
+                performed_by=performed_by,
+                reference_type="STOCK_TAKE",
+                reference_id=str(stock_take.id),
+            )
+        except ValidationError as exc:
+            sku = line.org_item.master_item.sku
+            name = line.org_item.display_name
+            raise ValidationError(
+                f"Cannot apply adjustment for {sku} ({name}): "
+                + " ".join(exc.messages)
+            )
 
-    stock_take.status = StockTake.COMPLETED
+    final_status = StockTake.COMPLETED_WITH_VARIANCES if any_adjustments else StockTake.COMPLETED
+    stock_take.status = final_status
     stock_take.approved_by = performed_by
     stock_take.approved_at = timezone.now()
     stock_take.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])

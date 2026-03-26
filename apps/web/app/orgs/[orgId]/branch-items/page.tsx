@@ -57,6 +57,8 @@ export default function BranchItemsPage() {
   const [pendingRowId, setPendingRowId] = useState<string | null>(null)
   const [error, setError] = useState("")
   const [confirmRow, setConfirmRow] = useState<BranchCatalogRow | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkError, setBulkError] = useState("")
 
   const branchesQuery = usePOBranches(orgId)
   const catalogQuery = useBranchItemCatalog({
@@ -65,7 +67,7 @@ export default function BranchItemsPage() {
     search: search || undefined,
     page,
   })
-  const { enableBranchItem, disableBranchItem } = useBranchItemMutations(orgId, branchId)
+  const { enableBranchItem, disableBranchItem, bulkActivateBranchItems } = useBranchItemMutations(orgId, branchId)
 
   useEffect(() => {
     setSearchDraft(search)
@@ -97,12 +99,16 @@ export default function BranchItemsPage() {
 
       if (trimmed.length >= 2) {
         if (trimmed !== search) {
+          setSelectedIds(new Set())
+          setBulkError("")
           updateParams({ search: trimmed, page: "1" })
         }
         return
       }
 
       if (search) {
+        setSelectedIds(new Set())
+        setBulkError("")
         updateParams({ search: null, page: "1" })
       }
     }, 300)
@@ -112,6 +118,9 @@ export default function BranchItemsPage() {
 
   const items = useMemo(() => catalogQuery.data?.results ?? [], [catalogQuery.data?.results])
   const count = catalogQuery.data?.count ?? 0
+  const disabledItems = items.filter((r) => !r.is_enabled)
+  const allDisabledSelected =
+    disabledItems.length > 0 && disabledItems.every((r) => selectedIds.has(r.id))
   const columns = useMemo(
     () => (canEdit ? ["Name", "SKU", "Status", "Actions"] : ["Name", "SKU", "Status"]),
     [canEdit],
@@ -154,6 +163,20 @@ export default function BranchItemsPage() {
     }
   }
 
+  async function handleBulkActivate() {
+    if (!branchId || selectedIds.size === 0) return
+    try {
+      setBulkError("")
+      await bulkActivateBranchItems.mutateAsync({
+        branch: branchId,
+        org_items: Array.from(selectedIds),
+      })
+      setSelectedIds(new Set())
+    } catch {
+      setBulkError("Could not activate selected items. Please try again.")
+    }
+  }
+
   let emptyMessage = "No active org items available for branch assignment"
   if (!branchId) {
     emptyMessage = "Select a branch to view its item catalog"
@@ -180,6 +203,8 @@ export default function BranchItemsPage() {
               disabled={branchesQuery.isLoading || showBranchError || showBranchPermissionError}
               onChange={(event) => {
                 setError("")
+                setSelectedIds(new Set())
+                setBulkError("")
                 updateParams({
                   branch: event.target.value || null,
                   search: null,
@@ -208,6 +233,26 @@ export default function BranchItemsPage() {
             />
           </div>
         </div>
+
+        {canEdit && branchId ? (
+          <div className="flex items-center justify-between">
+            <div>
+              {bulkError ? (
+                <p className="text-sm text-red-600">{bulkError}</p>
+              ) : null}
+            </div>
+            {selectedIds.size > 0 ? (
+              <Button
+                disabled={bulkActivateBranchItems.isPending}
+                onClick={() => void handleBulkActivate()}
+              >
+                {bulkActivateBranchItems.isPending
+                  ? "Activating..."
+                  : `Activate ${selectedIds.size} Item${selectedIds.size === 1 ? "" : "s"}`}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
 
         {error ? (
           <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -247,7 +292,7 @@ export default function BranchItemsPage() {
         ) : catalogQuery.isLoading ? (
             <Card>
               <CardContent className="p-0">
-                <BranchItemsTableSkeleton columns={columns} />
+                <BranchItemsTableSkeleton columns={columns} showSelect={canEdit && !!branchId} />
               </CardContent>
             </Card>
         ) : showCatalogPermissionError ? (
@@ -283,6 +328,36 @@ export default function BranchItemsPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        {canEdit && branchId ? (
+                          <TableHead className="w-10">
+                            <input
+                              type="checkbox"
+                              checked={allDisabledSelected}
+                              disabled={disabledItems.length === 0}
+                              ref={(el) => {
+                                if (el) {
+                                  const someSelected = disabledItems.some((r) => selectedIds.has(r.id))
+                                  el.indeterminate = someSelected && !allDisabledSelected
+                                }
+                              }}
+                              onChange={() => {
+                                if (allDisabledSelected) {
+                                  setSelectedIds((prev) => {
+                                    const next = new Set(prev)
+                                    disabledItems.forEach((r) => next.delete(r.id))
+                                    return next
+                                  })
+                                } else {
+                                  setSelectedIds((prev) => {
+                                    const next = new Set(prev)
+                                    disabledItems.forEach((r) => next.add(r.id))
+                                    return next
+                                  })
+                                }
+                              }}
+                            />
+                          </TableHead>
+                        ) : null}
                         {columns.map((column) => (
                           <TableHead key={column}>{column}</TableHead>
                         ))}
@@ -294,6 +369,27 @@ export default function BranchItemsPage() {
 
                         return (
                           <TableRow key={row.id}>
+                            {canEdit && branchId ? (
+                              <TableCell className="w-10">
+                                {!row.is_enabled ? (
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedIds.has(row.id)}
+                                    onChange={() => {
+                                      setSelectedIds((prev) => {
+                                        const next = new Set(prev)
+                                        if (next.has(row.id)) {
+                                          next.delete(row.id)
+                                        } else {
+                                          next.add(row.id)
+                                        }
+                                        return next
+                                      })
+                                    }}
+                                  />
+                                ) : null}
+                              </TableCell>
+                            ) : null}
                             <TableCell className="font-medium">{row.name}</TableCell>
                             <TableCell className="font-mono">{row.sku}</TableCell>
                             <TableCell>
@@ -337,9 +433,11 @@ export default function BranchItemsPage() {
                 <Button
                   variant="ghost"
                   disabled={page === "1"}
-                  onClick={() =>
+                  onClick={() => {
+                    setSelectedIds(new Set())
+                    setBulkError("")
                     updateParams({ page: String(Math.max(1, Number.parseInt(page, 10) - 1)) })
-                  }
+                  }}
                 >
                   Previous
                 </Button>
@@ -347,7 +445,11 @@ export default function BranchItemsPage() {
                 <Button
                   variant="ghost"
                   disabled={!catalogQuery.data?.next}
-                  onClick={() => updateParams({ page: String(Number.parseInt(page, 10) + 1) })}
+                  onClick={() => {
+                    setSelectedIds(new Set())
+                    setBulkError("")
+                    updateParams({ page: String(Number.parseInt(page, 10) + 1) })
+                  }}
                 >
                   Next
                 </Button>
@@ -372,11 +474,12 @@ export default function BranchItemsPage() {
   )
 }
 
-function BranchItemsTableSkeleton({ columns }: { columns: string[] }) {
+function BranchItemsTableSkeleton({ columns, showSelect }: { columns: string[]; showSelect?: boolean }) {
   return (
     <Table>
       <TableHeader>
         <TableRow>
+          {showSelect ? <TableHead className="w-10" /> : null}
           {columns.map((column) => (
             <TableHead key={column}>{column}</TableHead>
           ))}
@@ -385,6 +488,11 @@ function BranchItemsTableSkeleton({ columns }: { columns: string[] }) {
       <TableBody>
         {Array.from({ length: 6 }).map((_, index) => (
           <TableRow key={index}>
+            {showSelect ? (
+              <TableCell className="w-10">
+                <Skeleton className="h-4 w-4" />
+              </TableCell>
+            ) : null}
             {columns.map((column) => (
               <TableCell key={column}>
                 <Skeleton className="h-5 w-full max-w-[160px]" />

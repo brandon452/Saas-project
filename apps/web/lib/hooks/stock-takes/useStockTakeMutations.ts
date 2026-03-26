@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { apiRequest } from "@/lib/api"
 import { getCsrfHeader } from "@/lib/csrf"
 import type {
+  BulkUpdateStockTakeLinesPayload,
   CreateStockTakePayload,
   StockTakeDetail,
   StockTakeLine,
@@ -70,6 +71,29 @@ export function useStockTakeMutations(orgId: string) {
     },
   })
 
+  const bulkUpdateStockTakeLines = useMutation({
+    mutationFn: ({
+      stockTakeId,
+      payload,
+    }: {
+      stockTakeId: string
+      payload: BulkUpdateStockTakeLinesPayload
+    }) =>
+      apiRequest<StockTakeLine[]>(
+        `orgs/${orgId}/stock-takes/${stockTakeId}/lines/bulk-update/`,
+        {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify(payload),
+        },
+      ),
+    onSuccess: (_, { stockTakeId }) => {
+      queryClient.invalidateQueries({
+        queryKey: ["stock-takes", orgId, "detail", stockTakeId],
+      })
+    },
+  })
+
   const stockTakeAction = useMutation({
     mutationFn: ({
       stockTakeId,
@@ -94,6 +118,7 @@ export function useStockTakeMutations(orgId: string) {
     createStockTake,
     updateStockTakeNotes,
     updateStockTakeLine,
+    bulkUpdateStockTakeLines,
     stockTakeAction,
   }
 }

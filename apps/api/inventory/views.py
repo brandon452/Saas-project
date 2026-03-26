@@ -1,6 +1,6 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import IntegrityError
-from django.db.models import BooleanField, Case, F, IntegerField, OuterRef, Q, Subquery, Value, When
+from django.db import IntegrityError, transaction
+from django.db.models import BooleanField, Case, Count, F, IntegerField, OuterRef, Q, Subquery, Value, When
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework.decorators import action
 from rest_framework import status, viewsets
@@ -25,6 +25,7 @@ from tenancy.permissions import (
 
 from .models import BranchItem, MasterItem, OrgItem, StockLedger, StockOnHand, StockTake, StockTakeLine
 from .serializers import (
+    BranchItemBulkActivateSerializer,
     BranchItemCatalogSerializer,
     BranchItemCreateSerializer,
     BranchItemSerializer,
@@ -37,6 +38,7 @@ from .serializers import (
     StockOnHandSerializer,
     StockTakeCreateSerializer,
     StockTakeDetailSerializer,
+    StockTakeLineBulkUpdateSerializer,
     StockTakeLineSerializer,
     StockTakeLineUpdateSerializer,
     StockTakeListSerializer,
@@ -224,6 +226,69 @@ class BranchItemCatalogView(APIView):
         page = paginator.paginate_queryset(queryset, request, view=self)
         serializer = BranchItemCatalogSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
+
+
+class BranchItemBulkActivateView(APIView):
+    permission_classes = [IsAuthenticated, IsOrgOwnerOrAdmin]
+
+    def initial(self, request, *args, **kwargs):
+        org_id = self.kwargs.get("org_id")
+        try:
+            request.org = Organization.objects.get(pk=org_id, is_active=True)
+        except Organization.DoesNotExist:
+            raise NotFound("Organization not found.")
+
+        parent_membership = get_parent_membership(request)
+        request.parent_role = parent_membership.role if parent_membership else None
+        super().initial(request, *args, **kwargs)
+
+    @transaction.atomic
+    def post(self, request, org_id=None, *args, **kwargs):
+        serializer = BranchItemBulkActivateSerializer(
+            data=request.data, context={"request": request}
+        )
+        serializer.is_valid(raise_exception=True)
+
+        branch = serializer.validated_data["branch"]
+        org_items = serializer.validated_data["org_items"]
+
+        existing = {
+            bi.org_item_id: bi
+            for bi in BranchItem.objects.filter(
+                branch=branch,
+                org_item__in=org_items,
+            )
+        }
+
+        to_create = []
+        to_reactivate_ids = []
+        already_active = 0
+
+        for org_item in org_items:
+            bi = existing.get(org_item.id)
+            if bi is None:
+                to_create.append(BranchItem(org_item=org_item, branch=branch, is_active=True))
+            elif bi.is_active:
+                already_active += 1
+            else:
+                to_reactivate_ids.append(bi.id)
+
+        if to_create:
+            BranchItem.objects.bulk_create(to_create)
+
+        if to_reactivate_ids:
+            BranchItem.objects.filter(id__in=to_reactivate_ids).update(is_active=True)
+
+        activated = len(to_create) + len(to_reactivate_ids)
+
+        return Response(
+            {
+                "activated": activated,
+                "already_active": already_active,
+                "total": len(org_items),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class BranchItemViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelViewSet):
@@ -449,6 +514,14 @@ class StockTakeViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelVie
             "submitted_by",
             "approved_by",
             "cancelled_by",
+            "reopened_by",
+        ).annotate(
+            total_lines_count=Count("lines", distinct=True),
+            counted_lines_count=Count(
+                "lines",
+                filter=Q(lines__counted_quantity__isnull=False),
+                distinct=True,
+            ),
         )
         if self.action == "retrieve":
             queryset = queryset.prefetch_related("lines__org_item__master_item")
@@ -507,6 +580,54 @@ class StockTakeViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelVie
         queryset = stock_take.lines.select_related("org_item__master_item").all()
         serializer = StockTakeLineSerializer(queryset, many=True)
         return Response(serializer.data)
+
+    @action(detail=True, methods=["patch"], url_path="lines/bulk-update")
+    @transaction.atomic
+    def bulk_update_lines(self, request, *args, **kwargs):
+        stock_take = self.get_object()
+
+        if stock_take.status != StockTake.IN_PROGRESS:
+            raise DRFValidationError(
+                {"detail": "Lines can only be edited while the stock take is In Progress."}
+            )
+
+        serializer = StockTakeLineBulkUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        incoming = serializer.validated_data["lines"]
+
+        # Fetch all lines for this stock take in one query
+        incoming_ids = [item["id"] for item in incoming]
+        line_map = {
+            line.id: line
+            for line in StockTakeLine.objects.filter(
+                stock_take=stock_take, id__in=incoming_ids
+            )
+        }
+
+        # Reject any IDs that don't belong to this stock take
+        missing = [item["id"] for item in incoming if item["id"] not in line_map]
+        if missing:
+            raise DRFValidationError(
+                {"detail": f"Line IDs not found on this stock take: {missing}"}
+            )
+
+        # Process entries in request order.
+        # If duplicate IDs appear, the final occurrence determines the saved value.
+        for item in incoming:
+            line = line_map[item["id"]]
+            line.counted_quantity = item["counted_quantity"]
+
+        StockTakeLine.objects.bulk_update(
+            line_map.values(), ["counted_quantity"]
+        )
+
+        all_lines = (
+            stock_take.lines
+            .select_related("org_item__master_item")
+            .all()
+        )
+        return Response(StockTakeLineSerializer(all_lines, many=True).data)
 
     @action(detail=True, methods=["patch"], url_path=r"lines/(?P<line_pk>[0-9]+)")
     def update_line(self, request, line_pk=None, *args, **kwargs):

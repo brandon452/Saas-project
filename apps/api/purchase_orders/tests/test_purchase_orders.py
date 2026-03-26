@@ -543,6 +543,17 @@ class PurchaseOrderApiTests(APITestCase):
         line_a.refresh_from_db()
         self.assertEqual(line_a.ordered_quantity, 9)
 
+        # response body should reflect the saved value, not the pre-save state
+        self._auth(self.owner)
+        update_response = self.client.patch(
+            self._detail_url(po.id, f"lines/{line_a.id}/"),
+            {"ordered_quantity": 42},
+            format="json",
+            HTTP_HOST=self._host(),
+        )
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(update_response.data["ordered_quantity"], 42)
+
         self._auth(self.owner)
         duplicate_item = self.client.patch(
             self._detail_url(po.id, f"lines/{line_a.id}/"),
@@ -758,6 +769,95 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertEqual(earlier_receipt["received_by"], str(self.owner))
         self.assertEqual(earlier_receipt["line_count"], 1)
         self.assertEqual(earlier_receipt["total_quantity_received"], 2)
+
+    def test_valid_transitions_state_machine(self):
+        po = PurchaseOrder(status=PurchaseOrder.DRAFT)
+        self.assertTrue(po.can_transition_to(PurchaseOrder.SUBMITTED))
+        self.assertTrue(po.can_transition_to(PurchaseOrder.CANCELLED))
+        self.assertFalse(po.can_transition_to(PurchaseOrder.PARTIALLY_RECEIVED))
+        self.assertFalse(po.can_transition_to(PurchaseOrder.FULLY_RECEIVED))
+
+        po.status = PurchaseOrder.SUBMITTED
+        self.assertTrue(po.can_transition_to(PurchaseOrder.CANCELLED))
+        self.assertTrue(po.can_transition_to(PurchaseOrder.PARTIALLY_RECEIVED))
+        self.assertTrue(po.can_transition_to(PurchaseOrder.FULLY_RECEIVED))
+        self.assertFalse(po.can_transition_to(PurchaseOrder.DRAFT))
+
+        po.status = PurchaseOrder.PARTIALLY_RECEIVED
+        self.assertTrue(po.can_transition_to(PurchaseOrder.PARTIALLY_RECEIVED))
+        self.assertTrue(po.can_transition_to(PurchaseOrder.FULLY_RECEIVED))
+        self.assertFalse(po.can_transition_to(PurchaseOrder.CANCELLED))
+
+        po.status = PurchaseOrder.FULLY_RECEIVED
+        self.assertFalse(po.can_transition_to(PurchaseOrder.CANCELLED))
+        self.assertFalse(po.can_transition_to(PurchaseOrder.PARTIALLY_RECEIVED))
+
+        po.status = PurchaseOrder.CANCELLED
+        self.assertFalse(po.can_transition_to(PurchaseOrder.SUBMITTED))
+
+    def test_list_filters(self):
+        branch2 = Branch.objects.for_org(self.acme).create(
+            organization=self.acme, name="Branch Two", code="B2"
+        )
+        supplier2 = Supplier.objects.for_org(self.acme).create(
+            organization=self.acme, name="Supplier Two", created_by=self.owner
+        )
+        po_draft = PurchaseOrder.objects.for_org(self.acme).create(
+            organization=self.acme, po_number="PO-0001",
+            supplier=self.supplier, branch=self.branch,
+            status=PurchaseOrder.DRAFT, created_by=self.owner,
+        )
+        po_submitted = PurchaseOrder.objects.for_org(self.acme).create(
+            organization=self.acme, po_number="PO-0002",
+            supplier=supplier2, branch=branch2,
+            status=PurchaseOrder.SUBMITTED, created_by=self.owner,
+        )
+
+        self._auth(self.owner)
+
+        # status filter
+        res = self.client.get(self._base_url() + "?status=DRAFT", HTTP_HOST=self._host())
+        ids = {row["id"] for row in res.data["results"]}
+        self.assertIn(str(po_draft.id), ids)
+        self.assertNotIn(str(po_submitted.id), ids)
+
+        res = self.client.get(self._base_url() + "?status=SUBMITTED", HTTP_HOST=self._host())
+        ids = {row["id"] for row in res.data["results"]}
+        self.assertIn(str(po_submitted.id), ids)
+        self.assertNotIn(str(po_draft.id), ids)
+
+        # supplier filter
+        res = self.client.get(
+            self._base_url() + f"?supplier={supplier2.id}", HTTP_HOST=self._host()
+        )
+        ids = {row["id"] for row in res.data["results"]}
+        self.assertIn(str(po_submitted.id), ids)
+        self.assertNotIn(str(po_draft.id), ids)
+
+        # branch filter
+        res = self.client.get(
+            self._base_url() + f"?branch={branch2.id}", HTTP_HOST=self._host()
+        )
+        ids = {row["id"] for row in res.data["results"]}
+        self.assertIn(str(po_submitted.id), ids)
+        self.assertNotIn(str(po_draft.id), ids)
+
+        # search filter (po_number)
+        res = self.client.get(self._base_url() + "?search=PO-0001", HTTP_HOST=self._host())
+        ids = {row["id"] for row in res.data["results"]}
+        self.assertIn(str(po_draft.id), ids)
+        self.assertNotIn(str(po_submitted.id), ids)
+
+        # date filter
+        from django.utils import timezone
+        today = timezone.now().date().isoformat()
+        res = self.client.get(
+            self._base_url() + f"?created_at_after={today}&created_at_before={today}",
+            HTTP_HOST=self._host(),
+        )
+        ids = {row["id"] for row in res.data["results"]}
+        self.assertIn(str(po_draft.id), ids)
+        self.assertIn(str(po_submitted.id), ids)
 
     def test_retrieve_includes_empty_receipts_list_when_none_exist(self):
         po = PurchaseOrder.objects.for_org(self.acme).create(

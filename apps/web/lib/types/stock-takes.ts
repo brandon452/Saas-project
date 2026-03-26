@@ -3,6 +3,7 @@ export type StockTakeStatus =
   | "IN_PROGRESS"
   | "PENDING_APPROVAL"
   | "COMPLETED"
+  | "COMPLETED_WITH_VARIANCES"
   | "CANCELLED"
 
 export interface StockTakeLine {
@@ -15,20 +16,30 @@ export interface StockTakeLine {
   variance_preview: string | null
 }
 
+export interface StockTakeUser {
+  id: number
+  username: string
+}
+
 export interface StockTake {
   id: string
   branch: string | { id: string; name?: string; code?: string }
   status: StockTakeStatus
   notes: string
-  created_by: string | null
-  started_by: string | null
-  submitted_by: string | null
-  approved_by: string | null
-  cancelled_by: string | null
+  total_lines_count: number
+  counted_lines_count: number
+  created_by: StockTakeUser | null
+  started_by: StockTakeUser | null
+  submitted_by: StockTakeUser | null
+  approved_by: StockTakeUser | null
+  cancelled_by: StockTakeUser | null
+  reopened_by: StockTakeUser | null
   started_at: string | null
   submitted_at: string | null
   approved_at: string | null
   cancelled_at: string | null
+  reopened_at: string | null
+  snapshot_taken_at: string | null
   created_at: string
   updated_at: string
 }
@@ -48,4 +59,11 @@ export interface UpdateStockTakeNotesPayload {
 
 export interface UpdateStockTakeLinePayload {
   counted_quantity: string | null
+}
+
+export interface BulkUpdateStockTakeLinesPayload {
+  lines: Array<{
+    id: number
+    counted_quantity: string | null
+  }>
 }

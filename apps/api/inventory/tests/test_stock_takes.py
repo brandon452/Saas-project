@@ -150,7 +150,7 @@ class StockTakeApiTests(APITestCase):
         self.assertEqual(owner_response.status_code, 201)
         self.assertEqual(owner_response.data["status"], StockTake.DRAFT)
         self.assertEqual(owner_response.data["notes"], "Cycle count")
-        self.assertEqual(owner_response.data["created_by"], self.owner.id)
+        self.assertEqual(owner_response.data["created_by"]["id"], self.owner.id)
 
         admin_response = self._create_stock_take(user=self.admin)
         self.assertEqual(admin_response.status_code, 201)
@@ -250,7 +250,7 @@ class StockTakeApiTests(APITestCase):
         start_response = self._start_stock_take(stock_take, user=self.owner)
         self.assertEqual(start_response.status_code, 200)
         self.assertEqual(start_response.data["status"], StockTake.IN_PROGRESS)
-        self.assertEqual(start_response.data["started_by"], self.owner.id)
+        self.assertEqual(start_response.data["started_by"]["id"], self.owner.id)
         self.assertIsNotNone(start_response.data["started_at"])
 
         lines = list(
@@ -261,6 +261,10 @@ class StockTakeApiTests(APITestCase):
         self.assertEqual([line.org_item_id for line in lines], [self.item_a.id, self.item_b.id])
         self.assertEqual(lines[0].snapshot_quantity, Decimal("8.0000"))
         self.assertEqual(lines[1].snapshot_quantity, Decimal("3.0000"))
+
+        # Cancel the first take so the concurrent guard allows a second start on the same branch
+        cancel_stock_take(stock_take, self.owner)
+        stock_take.refresh_from_db()
 
         BranchItem.objects.filter(pk=self.branch_item_b.pk).delete()
         BranchItem.objects.create(branch=self.branch, org_item=self.item_b, is_active=True)
@@ -332,7 +336,7 @@ class StockTakeApiTests(APITestCase):
         submit_response = self._submit_stock_take(stock_take, user=self.admin)
         self.assertEqual(submit_response.status_code, 200)
         self.assertEqual(submit_response.data["status"], StockTake.PENDING_APPROVAL)
-        self.assertEqual(submit_response.data["submitted_by"], self.admin.id)
+        self.assertEqual(submit_response.data["submitted_by"]["id"], self.admin.id)
         self.assertIsNotNone(submit_response.data["submitted_at"])
 
         self._auth(self.staff)
@@ -392,8 +396,9 @@ class StockTakeApiTests(APITestCase):
 
         approve_response = self._approve_stock_take(stock_take, user=self.admin)
         self.assertEqual(approve_response.status_code, 200)
-        self.assertEqual(approve_response.data["status"], StockTake.COMPLETED)
-        self.assertEqual(approve_response.data["approved_by"], self.admin.id)
+        # line_a has a -3 adjustment (counted 9, live 12), so variances were posted
+        self.assertEqual(approve_response.data["status"], StockTake.COMPLETED_WITH_VARIANCES)
+        self.assertEqual(approve_response.data["approved_by"]["id"], self.admin.id)
         self.assertIsNotNone(approve_response.data["approved_at"])
 
         ledgers = list(StockLedger.objects.for_org(self.org).filter(reference_type="STOCK_TAKE"))
@@ -429,7 +434,7 @@ class StockTakeApiTests(APITestCase):
         draft_response = self._cancel_stock_take(draft_take, user=self.owner)
         self.assertEqual(draft_response.status_code, 200)
         self.assertEqual(draft_response.data["status"], StockTake.CANCELLED)
-        self.assertEqual(draft_response.data["cancelled_by"], self.owner.id)
+        self.assertEqual(draft_response.data["cancelled_by"]["id"], self.owner.id)
         self.assertIsNotNone(draft_response.data["cancelled_at"])
 
         progress_take = StockTake.objects.create(organization=self.org, branch=self.branch, created_by=self.owner)
@@ -457,6 +462,15 @@ class StockTakeApiTests(APITestCase):
         )
         completed_response = self._cancel_stock_take(completed_take, user=self.owner)
         self.assertEqual(completed_response.status_code, 400)
+
+        completed_variances_take = StockTake.objects.create(
+            organization=self.org,
+            branch=self.branch,
+            status=StockTake.COMPLETED_WITH_VARIANCES,
+            created_by=self.owner,
+        )
+        completed_variances_response = self._cancel_stock_take(completed_variances_take, user=self.owner)
+        self.assertEqual(completed_variances_response.status_code, 400)
 
         self._auth(self.staff)
         forbidden = self.client.post(

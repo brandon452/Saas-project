@@ -45,6 +45,7 @@ ROLE_POLICY = {
         "cancel": {"OWNER", "ADMIN"},
         "lines": {"OWNER", "ADMIN", "STAFF"},
         "update_line": {"OWNER", "ADMIN", "STAFF"},
+        "bulk_update_lines": {"OWNER", "ADMIN", "STAFF"},
     },
     "members": {
         "list": {"OWNER", "ADMIN"},
@@ -87,7 +88,7 @@ ROLE_POLICY = {
         "approve": {"OWNER", "ADMIN"},
         "dispatch": {"OWNER", "ADMIN"},
         "receive": {"OWNER", "ADMIN", "STAFF"},
-        "cancel": {"OWNER"},
+        "cancel": {"OWNER", "ADMIN"},
         "update": set(),
         "partial_update": set(),
         "destroy": set(),

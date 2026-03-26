@@ -67,6 +67,13 @@ class BranchTransfer(TenantModel):
         on_delete=models.SET_NULL,
         related_name="approved_transfers",
     )
+    dispatched_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="dispatched_transfers",
+    )
     dispatched_at = models.DateTimeField(null=True, blank=True)
     received_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

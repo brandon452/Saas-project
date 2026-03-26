@@ -29,7 +29,7 @@ import { calculatePOTotal, formatPOValue } from "@/lib/utils/po"
 export default function PurchaseOrderDetailPage() {
   const router = useRouter()
   const params = useParams<{ orgId: string; id: string }>()
-  const { orgId } = useOrg()
+  const { orgId, canAccess } = useOrg()
   const poId = params?.id ?? ""
 
   const purchaseOrderQuery = usePurchaseOrder(orgId, poId)
@@ -182,12 +182,14 @@ export default function PurchaseOrderDetailPage() {
                   <Button disabled={isActionPending} onClick={() => setSubmitDialogOpen(true)}>
                     Submit
                   </Button>
-                  <Button variant="ghost" disabled={isActionPending} onClick={() => setCancelDialogOpen(true)}>
-                    Cancel
-                  </Button>
+                  {canAccess(["OWNER"]) ? (
+                    <Button variant="ghost" disabled={isActionPending} onClick={() => setCancelDialogOpen(true)}>
+                      Cancel
+                    </Button>
+                  ) : null}
                 </>
               ) : null}
-              {po.status === "SUBMITTED" ? (
+              {po.status === "SUBMITTED" && canAccess(["OWNER"]) ? (
                 <Button variant="ghost" disabled={isActionPending} onClick={() => setCancelDialogOpen(true)}>
                   Cancel
                 </Button>

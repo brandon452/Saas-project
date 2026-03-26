@@ -4,8 +4,14 @@ apps/web/.next/
 apps/web/node_modules/
 apps/api/.venv/
 apps/api/__pycache__/
+apps/api/**/__pycache__/
 apps/api/**/*.pyc
 apps/api/.env
+apps/api/db.sqlite3
+apps/api/staticfiles/
 .env
 apps/web/.env.local
+apps/web/out/
+apps/web/tsconfig.tsbuildinfo
+*.log
 

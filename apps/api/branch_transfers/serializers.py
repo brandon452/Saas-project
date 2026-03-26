@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from inventory.models import BranchItem
-from inventory.serializers import ItemSummarySerializer
+from inventory.serializers import ItemSummarySerializer, PerformedBySerializer
 from tenancy.models import ParentCompanyMember
 
 from .models import BranchTransfer, BranchTransferLine
@@ -48,6 +48,10 @@ class BranchTransferReceiveLineSerializer(serializers.Serializer):
 
 class BranchTransferSerializer(serializers.ModelSerializer):
     lines = BranchTransferLineSerializer(many=True, read_only=True)
+    created_by = PerformedBySerializer(read_only=True)
+    approved_by = PerformedBySerializer(read_only=True)
+    dispatched_by = PerformedBySerializer(read_only=True)
+    received_by = PerformedBySerializer(read_only=True)
 
     class Meta:
         model = BranchTransfer
@@ -63,6 +67,7 @@ class BranchTransferSerializer(serializers.ModelSerializer):
             "lines",
             "created_by",
             "approved_by",
+            "dispatched_by",
             "dispatched_at",
             "received_by",
             "received_at",
@@ -77,6 +82,7 @@ class BranchTransferSerializer(serializers.ModelSerializer):
             "lines",
             "created_by",
             "approved_by",
+            "dispatched_by",
             "dispatched_at",
             "received_by",
             "received_at",

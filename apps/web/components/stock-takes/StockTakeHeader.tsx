@@ -102,6 +102,7 @@ export function StockTakeHeader({ orgId, stockTake, onChanged }: StockTakeHeader
     IN_PROGRESS: ["submit", "cancel"],
     PENDING_APPROVAL: ["reopen", "approve", "cancel"],
     COMPLETED: [],
+    COMPLETED_WITH_VARIANCES: [],
     CANCELLED: [],
   } as const
 
@@ -118,9 +119,16 @@ export function StockTakeHeader({ orgId, stockTake, onChanged }: StockTakeHeader
               <p>Branch: {branchLabel}</p>
               <p>Created: {formatDateTime(stockTake.created_at)}</p>
               <p>Started: {formatDateTime(stockTake.started_at)}</p>
+              <p>Snapshot taken: {formatDateTime(stockTake.snapshot_taken_at)}</p>
               <p>Submitted: {formatDateTime(stockTake.submitted_at)}</p>
               <p>Approved: {formatDateTime(stockTake.approved_at)}</p>
               <p>Cancelled: {formatDateTime(stockTake.cancelled_at)}</p>
+              {stockTake.reopened_at ? (
+                <>
+                  <p>Reopened: {formatDateTime(stockTake.reopened_at)}</p>
+                  <p>Reopened by: {stockTake.reopened_by?.username ?? "\u2014"}</p>
+                </>
+              ) : null}
             </div>
           </div>
 

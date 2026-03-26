@@ -208,6 +208,42 @@ class StockMovementServiceTests(TransactionTestCase):
         soh = StockOnHand.objects.for_org(self.org).get(branch=self.branch, item=self.item)
         self.assertEqual(soh.quantity, Decimal("4.0000"))
 
+    def test_receipt_with_negative_quantity_raises(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            record_stock_movement(
+                self.org, self.branch, self.item,
+                Decimal("-1.0000"), "RECEIPT",
+            )
+        self.assertIn("positive", str(ctx.exception))
+
+    def test_issue_with_positive_quantity_raises(self):
+        from django.core.exceptions import ValidationError
+        record_stock_movement(self.org, self.branch, self.item, Decimal("5.0000"), "RECEIPT")
+        with self.assertRaises(ValidationError) as ctx:
+            record_stock_movement(
+                self.org, self.branch, self.item,
+                Decimal("1.0000"), "ISSUE",
+            )
+        self.assertIn("negative", str(ctx.exception))
+
+    def test_adjustment_accepts_positive_quantity(self):
+        ledger, created = record_stock_movement(
+            self.org, self.branch, self.item,
+            Decimal("3.0000"), "ADJUSTMENT",
+        )
+        self.assertTrue(created)
+        self.assertEqual(ledger.quantity, Decimal("3.0000"))
+
+    def test_adjustment_accepts_negative_quantity(self):
+        record_stock_movement(self.org, self.branch, self.item, Decimal("5.0000"), "RECEIPT")
+        ledger, created = record_stock_movement(
+            self.org, self.branch, self.item,
+            Decimal("-2.0000"), "ADJUSTMENT",
+        )
+        self.assertTrue(created)
+        self.assertEqual(ledger.quantity, Decimal("-2.0000"))
+
     def test_stock_consistency_without_idempotency_still_holds(self):
         def worker():
             close_old_connections()

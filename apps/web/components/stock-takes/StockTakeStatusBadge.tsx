@@ -7,6 +7,7 @@ const LABELS: Record<StockTakeStatus, string> = {
   IN_PROGRESS: "In Progress",
   PENDING_APPROVAL: "Pending Approval",
   COMPLETED: "Completed",
+  COMPLETED_WITH_VARIANCES: "Completed with Variances",
   CANCELLED: "Cancelled",
 }
 

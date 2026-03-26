@@ -116,6 +116,42 @@ class OrgMasterItemSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "name", "sku", "is_active", "created_at"]
 
 
+class BranchItemBulkActivateSerializer(serializers.Serializer):
+    branch = serializers.UUIDField()
+    org_items = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+        max_length=500,
+    )
+
+    def validate_branch(self, value):
+        request = self.context["request"]
+        try:
+            return Branch.objects.get(pk=value, organization=request.org)
+        except Branch.DoesNotExist:
+            raise serializers.ValidationError(
+                "Branch not found or does not belong to this organisation."
+            )
+
+    def validate_org_items(self, value):
+        request = self.context["request"]
+        unique_ids = list(dict.fromkeys(value))
+        items = list(
+            OrgItem.objects.filter(
+                id__in=unique_ids,
+                organization=request.org,
+                is_active=True,
+            )
+        )
+        found_ids = {item.id for item in items}
+        missing = [str(uid) for uid in unique_ids if uid not in found_ids]
+        if missing:
+            raise serializers.ValidationError(
+                f"Some items were not found or do not belong to this organisation: {', '.join(missing)}"
+            )
+        return items
+
+
 class BranchItemCatalogSerializer(serializers.Serializer):
     """
     Annotated OrgItem row for the branch catalog management page.
@@ -325,6 +361,15 @@ class StockTakeLineUpdateSerializer(serializers.ModelSerializer):
 
 
 class StockTakeListSerializer(serializers.ModelSerializer):
+    counted_lines_count = serializers.SerializerMethodField()
+    total_lines_count = serializers.SerializerMethodField()
+    created_by = PerformedBySerializer(read_only=True)
+    started_by = PerformedBySerializer(read_only=True)
+    submitted_by = PerformedBySerializer(read_only=True)
+    approved_by = PerformedBySerializer(read_only=True)
+    cancelled_by = PerformedBySerializer(read_only=True)
+    reopened_by = PerformedBySerializer(read_only=True)
+
     class Meta:
         model = StockTake
         fields = [
@@ -332,37 +377,65 @@ class StockTakeListSerializer(serializers.ModelSerializer):
             "branch",
             "status",
             "notes",
+            "total_lines_count",
+            "counted_lines_count",
             "created_by",
             "started_by",
             "submitted_by",
             "approved_by",
             "cancelled_by",
+            "reopened_by",
             "started_at",
             "submitted_at",
             "approved_at",
             "cancelled_at",
+            "reopened_at",
+            "snapshot_taken_at",
             "created_at",
             "updated_at",
         ]
         read_only_fields = [
             "id",
             "status",
+            "total_lines_count",
+            "counted_lines_count",
             "created_by",
             "started_by",
             "submitted_by",
             "approved_by",
             "cancelled_by",
+            "reopened_by",
             "started_at",
             "submitted_at",
             "approved_at",
             "cancelled_at",
+            "reopened_at",
+            "snapshot_taken_at",
             "created_at",
             "updated_at",
         ]
+
+    def get_counted_lines_count(self, obj):
+        if hasattr(obj, "counted_lines_count"):
+            return obj.counted_lines_count
+        return obj.lines.filter(counted_quantity__isnull=False).count()
+
+    def get_total_lines_count(self, obj):
+        if hasattr(obj, "total_lines_count"):
+            return obj.total_lines_count
+        return obj.lines.count()
 
 
 class StockTakeDetailSerializer(serializers.ModelSerializer):
     lines = StockTakeLineSerializer(many=True, read_only=True)
+    counted_lines_count = serializers.SerializerMethodField()
+    total_lines_count = serializers.SerializerMethodField()
+    created_by = PerformedBySerializer(read_only=True)
+    started_by = PerformedBySerializer(read_only=True)
+    submitted_by = PerformedBySerializer(read_only=True)
+    approved_by = PerformedBySerializer(read_only=True)
+    cancelled_by = PerformedBySerializer(read_only=True)
+    reopened_by = PerformedBySerializer(read_only=True)
 
     class Meta:
         model = StockTake
@@ -372,15 +445,20 @@ class StockTakeDetailSerializer(serializers.ModelSerializer):
             "status",
             "notes",
             "lines",
+            "total_lines_count",
+            "counted_lines_count",
             "created_by",
             "started_by",
             "submitted_by",
             "approved_by",
             "cancelled_by",
+            "reopened_by",
             "started_at",
             "submitted_at",
             "approved_at",
             "cancelled_at",
+            "reopened_at",
+            "snapshot_taken_at",
             "created_at",
             "updated_at",
         ]
@@ -388,18 +466,33 @@ class StockTakeDetailSerializer(serializers.ModelSerializer):
             "id",
             "status",
             "lines",
+            "total_lines_count",
+            "counted_lines_count",
             "created_by",
             "started_by",
             "submitted_by",
             "approved_by",
             "cancelled_by",
+            "reopened_by",
             "started_at",
             "submitted_at",
             "approved_at",
             "cancelled_at",
+            "reopened_at",
+            "snapshot_taken_at",
             "created_at",
             "updated_at",
         ]
+
+    def get_counted_lines_count(self, obj):
+        if hasattr(obj, "counted_lines_count"):
+            return obj.counted_lines_count
+        return obj.lines.filter(counted_quantity__isnull=False).count()
+
+    def get_total_lines_count(self, obj):
+        if hasattr(obj, "total_lines_count"):
+            return obj.total_lines_count
+        return obj.lines.count()
 
 
 class StockTakeCreateSerializer(serializers.ModelSerializer):
@@ -411,6 +504,31 @@ class StockTakeCreateSerializer(serializers.ModelSerializer):
         request = self.context["request"]
         if value.organization != request.org:
             raise serializers.ValidationError("Branch does not belong to this organisation.")
+        return value
+
+
+class StockTakeLineBulkUpdateItemSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    counted_quantity = serializers.DecimalField(
+        max_digits=12, decimal_places=4, allow_null=True
+    )
+
+    def validate_counted_quantity(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError("counted_quantity cannot be negative.")
+        return value
+
+
+class StockTakeLineBulkUpdateSerializer(serializers.Serializer):
+    lines = StockTakeLineBulkUpdateItemSerializer(many=True)
+
+    def validate_lines(self, value):
+        if not value:
+            raise serializers.ValidationError("This list may not be empty.")
+        if len(value) > 1000:
+            raise serializers.ValidationError(
+                "Ensure this field has no more than 1000 elements."
+            )
         return value
 
 
