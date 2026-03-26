@@ -152,6 +152,52 @@ class BranchItemBulkActivateSerializer(serializers.Serializer):
         return items
 
 
+class BranchItemBulkDeactivateSerializer(serializers.Serializer):
+    branch = serializers.UUIDField()
+    branch_items = serializers.ListField(
+        child=serializers.IntegerField(),
+        min_length=1,
+        max_length=500,
+    )
+
+    def validate_branch(self, value):
+        request = self.context["request"]
+        try:
+            return Branch.objects.get(pk=value, organization=request.org)
+        except Branch.DoesNotExist:
+            raise serializers.ValidationError(
+                "Branch not found or does not belong to this organisation."
+            )
+
+    def validate_branch_items(self, value):
+        request = self.context["request"]
+        unique_ids = list(dict.fromkeys(value))
+        items = list(
+            BranchItem.objects.filter(
+                id__in=unique_ids,
+                branch__organization=request.org,
+            )
+        )
+        found_ids = {item.id for item in items}
+        missing = [str(uid) for uid in unique_ids if uid not in found_ids]
+        if missing:
+            raise serializers.ValidationError(
+                f"Some branch items were not found or do not belong to this organisation: {', '.join(missing)}"
+            )
+        return items
+
+    def validate(self, attrs):
+        branch = attrs.get("branch")
+        branch_items = attrs.get("branch_items", [])
+        if branch:
+            wrong_branch = [bi for bi in branch_items if bi.branch_id != branch.id]
+            if wrong_branch:
+                raise serializers.ValidationError(
+                    {"branch_items": "Some branch items do not belong to the specified branch."}
+                )
+        return attrs
+
+
 class BranchItemCatalogSerializer(serializers.Serializer):
     """
     Annotated OrgItem row for the branch catalog management page.

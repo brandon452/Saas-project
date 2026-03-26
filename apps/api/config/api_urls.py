@@ -9,6 +9,7 @@ from branch_transfers.views import BranchTransferViewSet
 from goods_receipts.views import GoodsReceiptViewSet
 from inventory.views import (
     BranchItemBulkActivateView,
+    BranchItemBulkDeactivateView,
     BranchItemCatalogView,
     BranchItemViewSet,
     MasterItemViewSet,
@@ -70,6 +71,11 @@ urlpatterns = [
         "orgs/<uuid:org_id>/branch-items/bulk-activate/",
         BranchItemBulkActivateView.as_view(),
         name="branch-items-bulk-activate",
+    ),
+    path(
+        "orgs/<uuid:org_id>/branch-items/bulk-deactivate/",
+        BranchItemBulkDeactivateView.as_view(),
+        name="branch-items-bulk-deactivate",
     ),
     path("orgs/<uuid:org_id>/", include(org_router.urls)),
     path("parent/", include(parent_router.urls)),

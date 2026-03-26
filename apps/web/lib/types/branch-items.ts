@@ -28,3 +28,14 @@ export interface BulkActivateResponse {
   already_active: number
   total: number
 }
+
+export interface BulkDeactivatePayload {
+  branch: string
+  branch_items: number[]
+}
+
+export interface BulkDeactivateResponse {
+  deactivated: number
+  already_inactive: number
+  total: number
+}

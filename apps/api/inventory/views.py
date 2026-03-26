@@ -26,6 +26,7 @@ from tenancy.permissions import (
 from .models import BranchItem, MasterItem, OrgItem, StockLedger, StockOnHand, StockTake, StockTakeLine
 from .serializers import (
     BranchItemBulkActivateSerializer,
+    BranchItemBulkDeactivateSerializer,
     BranchItemCatalogSerializer,
     BranchItemCreateSerializer,
     BranchItemSerializer,
@@ -286,6 +287,45 @@ class BranchItemBulkActivateView(APIView):
                 "activated": activated,
                 "already_active": already_active,
                 "total": len(org_items),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class BranchItemBulkDeactivateView(APIView):
+    permission_classes = [IsAuthenticated, IsOrgOwnerOrAdmin]
+
+    def initial(self, request, *args, **kwargs):
+        org_id = self.kwargs.get("org_id")
+        try:
+            request.org = Organization.objects.get(pk=org_id, is_active=True)
+        except Organization.DoesNotExist:
+            raise NotFound("Organization not found.")
+
+        parent_membership = get_parent_membership(request)
+        request.parent_role = parent_membership.role if parent_membership else None
+        super().initial(request, *args, **kwargs)
+
+    @transaction.atomic
+    def post(self, request, org_id=None, *args, **kwargs):
+        serializer = BranchItemBulkDeactivateSerializer(
+            data=request.data, context={"request": request}
+        )
+        serializer.is_valid(raise_exception=True)
+
+        branch_items = serializer.validated_data["branch_items"]
+
+        active_ids = [bi.id for bi in branch_items if bi.is_active]
+        already_inactive = len(branch_items) - len(active_ids)
+
+        if active_ids:
+            BranchItem.objects.filter(id__in=active_ids).update(is_active=False)
+
+        return Response(
+            {
+                "deactivated": len(active_ids),
+                "already_inactive": already_inactive,
+                "total": len(branch_items),
             },
             status=status.HTTP_200_OK,
         )

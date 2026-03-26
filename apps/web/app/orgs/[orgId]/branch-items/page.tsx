@@ -59,6 +59,9 @@ export default function BranchItemsPage() {
   const [confirmRow, setConfirmRow] = useState<BranchCatalogRow | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkError, setBulkError] = useState("")
+  const [selectedDeactivateIds, setSelectedDeactivateIds] = useState<Set<number>>(new Set())
+  const [bulkDeactivateError, setBulkDeactivateError] = useState("")
+  const [confirmBulkDeactivate, setConfirmBulkDeactivate] = useState(false)
 
   const branchesQuery = usePOBranches(orgId)
   const catalogQuery = useBranchItemCatalog({
@@ -67,7 +70,7 @@ export default function BranchItemsPage() {
     search: search || undefined,
     page,
   })
-  const { enableBranchItem, disableBranchItem, bulkActivateBranchItems } = useBranchItemMutations(orgId, branchId)
+  const { enableBranchItem, disableBranchItem, bulkActivateBranchItems, bulkDeactivateBranchItems } = useBranchItemMutations(orgId, branchId)
 
   useEffect(() => {
     setSearchDraft(search)
@@ -101,6 +104,8 @@ export default function BranchItemsPage() {
         if (trimmed !== search) {
           setSelectedIds(new Set())
           setBulkError("")
+          setSelectedDeactivateIds(new Set())
+          setBulkDeactivateError("")
           updateParams({ search: trimmed, page: "1" })
         }
         return
@@ -109,6 +114,8 @@ export default function BranchItemsPage() {
       if (search) {
         setSelectedIds(new Set())
         setBulkError("")
+        setSelectedDeactivateIds(new Set())
+        setBulkDeactivateError("")
         updateParams({ search: null, page: "1" })
       }
     }, 300)
@@ -177,6 +184,21 @@ export default function BranchItemsPage() {
     }
   }
 
+  async function handleBulkDeactivate() {
+    if (!branchId || selectedDeactivateIds.size === 0) return
+    try {
+      setBulkDeactivateError("")
+      await bulkDeactivateBranchItems.mutateAsync({
+        branch: branchId,
+        branch_items: Array.from(selectedDeactivateIds),
+      })
+      setSelectedDeactivateIds(new Set())
+      setConfirmBulkDeactivate(false)
+    } catch {
+      setBulkDeactivateError("Could not deactivate selected items. Please try again.")
+    }
+  }
+
   let emptyMessage = "No active org items available for branch assignment"
   if (!branchId) {
     emptyMessage = "Select a branch to view its item catalog"
@@ -205,6 +227,8 @@ export default function BranchItemsPage() {
                 setError("")
                 setSelectedIds(new Set())
                 setBulkError("")
+                setSelectedDeactivateIds(new Set())
+                setBulkDeactivateError("")
                 updateParams({
                   branch: event.target.value || null,
                   search: null,
@@ -236,21 +260,35 @@ export default function BranchItemsPage() {
 
         {canEdit && branchId ? (
           <div className="flex items-center justify-between">
-            <div>
+            <div className="space-y-1">
               {bulkError ? (
                 <p className="text-sm text-red-600">{bulkError}</p>
               ) : null}
+              {bulkDeactivateError ? (
+                <p className="text-sm text-red-600">{bulkDeactivateError}</p>
+              ) : null}
             </div>
-            {selectedIds.size > 0 ? (
-              <Button
-                disabled={bulkActivateBranchItems.isPending}
-                onClick={() => void handleBulkActivate()}
-              >
-                {bulkActivateBranchItems.isPending
-                  ? "Activating..."
-                  : `Activate ${selectedIds.size} Item${selectedIds.size === 1 ? "" : "s"}`}
-              </Button>
-            ) : null}
+            <div className="flex items-center gap-2">
+              {selectedIds.size > 0 ? (
+                <Button
+                  disabled={bulkActivateBranchItems.isPending}
+                  onClick={() => void handleBulkActivate()}
+                >
+                  {bulkActivateBranchItems.isPending
+                    ? "Activating..."
+                    : `Activate ${selectedIds.size} Item${selectedIds.size === 1 ? "" : "s"}`}
+                </Button>
+              ) : null}
+              {selectedDeactivateIds.size > 0 ? (
+                <Button
+                  variant="destructive"
+                  disabled={bulkDeactivateBranchItems.isPending}
+                  onClick={() => setConfirmBulkDeactivate(true)}
+                >
+                  {`Deactivate ${selectedDeactivateIds.size} Item${selectedDeactivateIds.size === 1 ? "" : "s"}`}
+                </Button>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -329,34 +367,7 @@ export default function BranchItemsPage() {
                     <TableHeader>
                       <TableRow>
                         {canEdit && branchId ? (
-                          <TableHead className="w-10">
-                            <input
-                              type="checkbox"
-                              checked={allDisabledSelected}
-                              disabled={disabledItems.length === 0}
-                              ref={(el) => {
-                                if (el) {
-                                  const someSelected = disabledItems.some((r) => selectedIds.has(r.id))
-                                  el.indeterminate = someSelected && !allDisabledSelected
-                                }
-                              }}
-                              onChange={() => {
-                                if (allDisabledSelected) {
-                                  setSelectedIds((prev) => {
-                                    const next = new Set(prev)
-                                    disabledItems.forEach((r) => next.delete(r.id))
-                                    return next
-                                  })
-                                } else {
-                                  setSelectedIds((prev) => {
-                                    const next = new Set(prev)
-                                    disabledItems.forEach((r) => next.add(r.id))
-                                    return next
-                                  })
-                                }
-                              }}
-                            />
-                          </TableHead>
+                          <TableHead className="w-10" />
                         ) : null}
                         {columns.map((column) => (
                           <TableHead key={column}>{column}</TableHead>
@@ -382,6 +393,23 @@ export default function BranchItemsPage() {
                                           next.delete(row.id)
                                         } else {
                                           next.add(row.id)
+                                        }
+                                        return next
+                                      })
+                                    }}
+                                  />
+                                ) : row.branch_item_id !== null ? (
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedDeactivateIds.has(row.branch_item_id)}
+                                    onChange={() => {
+                                      const id = row.branch_item_id!
+                                      setSelectedDeactivateIds((prev) => {
+                                        const next = new Set(prev)
+                                        if (next.has(id)) {
+                                          next.delete(id)
+                                        } else {
+                                          next.add(id)
                                         }
                                         return next
                                       })
@@ -436,6 +464,8 @@ export default function BranchItemsPage() {
                   onClick={() => {
                     setSelectedIds(new Set())
                     setBulkError("")
+                    setSelectedDeactivateIds(new Set())
+                    setBulkDeactivateError("")
                     updateParams({ page: String(Math.max(1, Number.parseInt(page, 10) - 1)) })
                   }}
                 >
@@ -448,6 +478,8 @@ export default function BranchItemsPage() {
                   onClick={() => {
                     setSelectedIds(new Set())
                     setBulkError("")
+                    setSelectedDeactivateIds(new Set())
+                    setBulkDeactivateError("")
                     updateParams({ page: String(Number.parseInt(page, 10) + 1) })
                   }}
                 >
@@ -467,6 +499,18 @@ export default function BranchItemsPage() {
         confirmLabel="Disable"
         onConfirm={() => {
           void handleDisable()
+        }}
+        destructive
+      />
+
+      <ConfirmDialog
+        open={confirmBulkDeactivate}
+        onOpenChange={(open) => !open && setConfirmBulkDeactivate(false)}
+        title="Deactivate Branch Items"
+        description={`Deactivate ${selectedDeactivateIds.size} item${selectedDeactivateIds.size === 1 ? "" : "s"} at this branch? They will be hidden from item search and transactions.`}
+        confirmLabel={bulkDeactivateBranchItems.isPending ? "Deactivating..." : "Deactivate"}
+        onConfirm={() => {
+          void handleBulkDeactivate()
         }}
         destructive
       />
