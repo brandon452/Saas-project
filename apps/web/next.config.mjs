@@ -9,7 +9,13 @@ export default function nextConfig(phase) {
     },
     reactStrictMode: true,
     async rewrites() {
-      return []
+      if (!process.env.BACKEND_URL) return []
+      return [
+        {
+          source: "/api/:path*",
+          destination: `${process.env.BACKEND_URL}/api/:path*`,
+        },
+      ]
     },
   }
 }
