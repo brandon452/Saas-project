@@ -8,6 +8,7 @@ python-dotenv==1.0.1
 psycopg[binary]==3.2.13
 redis==5.2.1
 whitenoise[brotli]==6.8.2
+gunicorn==23.0.0
 ruff==0.9.7
 
 
