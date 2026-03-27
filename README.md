@@ -78,9 +78,15 @@ Add to `C:\Windows\System32\drivers\etc\hosts`:
 - One `idempotency_key` represents exactly one stock movement. Clients must generate a fresh key for each distinct write.
 
 ## Deployment Targets
-- Frontend: Vercel
-- Backend: Render (use `gunicorn config.wsgi:application`)
-- Database: Supabase (`DB_SSL_REQUIRE=true`)
+- Frontend: Vercel (root directory: `apps/web`)
+- Backend: Railway (reads `railway.toml` at repo root)
+- Database: Supabase (Session pooler, `DB_SSL_REQUIRE=true`)
+- Redis: Upstash (copy `REDIS_URL` from Upstash console)
+
+## Production Environment Variables
+See `infra/.env.example` for the full list of required variables.
+Set them in Railway (backend) and Vercel (frontend) — do not commit real values.
 
 ## Production CORS
-Update `CORS_ALLOWED_ORIGIN_REGEXES` in `apps/api/config/settings/prod.py` to your domain.
+Set `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` as environment variables in Railway.
+No code changes needed — `prod.py` reads them automatically.
