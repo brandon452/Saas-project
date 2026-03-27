@@ -4,6 +4,11 @@ from .base import *  # noqa: F403
 
 DEBUG = False
 
+# Railway terminates SSL at the load balancer and forwards requests as HTTP
+# internally. SECURE_SSL_REDIRECT would cause infinite redirects or healthcheck
+# failures since Django never sees HTTPS directly.
+SECURE_SSL_REDIRECT = False
+
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
