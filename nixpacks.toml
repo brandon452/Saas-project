@@ -1,4 +1,8 @@
-providers = ["python"]
+[phases.setup]
+nixPkgs = ["python312"]
 
 [phases.install]
-cmds = ["pip install -r apps/api/requirements.txt"]
+cmds = [
+  "python3 -m venv /app/.venv",
+  "/app/.venv/bin/pip install -r apps/api/requirements.txt"
+]
