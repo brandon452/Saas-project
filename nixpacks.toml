@@ -1,5 +1,4 @@
-[phases.setup]
-nixPkgs = ["python312", "python312Packages.pip"]
+providers = ["python"]
 
 [phases.install]
 cmds = ["pip install -r apps/api/requirements.txt"]
