@@ -68,7 +68,7 @@ export default function PurchaseOrderDetailPage() {
       setEditBranch(po.branch)
       setEditNotes(po.notes)
     }
-  }, [po?.id])
+  }, [po])
 
   async function handleSaveHeader() {
     if (!po) return
