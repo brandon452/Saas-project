@@ -31,6 +31,14 @@ export function CreateSupplierDialog({
   const [name, setName] = useState("")
   const [error, setError] = useState("")
 
+  function handleOpenChange(next: boolean) {
+    if (!next) {
+      setName("")
+      setError("")
+    }
+    onOpenChange(next)
+  }
+
   async function handleSubmit() {
     const trimmedName = name.trim()
 
@@ -41,9 +49,8 @@ export function CreateSupplierDialog({
 
     try {
       setError("")
-      await createSupplier.mutateAsync({ name: trimmedName })
-      onOpenChange(false)
-      setName("")
+      await createSupplier.mutateAsync({ display_name: trimmedName })
+      handleOpenChange(false)
     } catch (err) {
       const message = err instanceof Error ? err.message : ""
       if (message.includes("403")) {
@@ -57,7 +64,7 @@ export function CreateSupplierDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New Supplier</DialogTitle>
@@ -70,6 +77,7 @@ export function CreateSupplierDialog({
             id="supplier-name"
             value={name}
             onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter") void handleSubmit() }}
             disabled={createSupplier.isPending}
           />
           {error ? <p className="text-sm text-red-600">{error}</p> : null}

@@ -3,17 +3,14 @@
 import { useQuery } from "@tanstack/react-query"
 
 import { apiRequest } from "@/lib/api"
+import type { Supplier } from "@/lib/types/suppliers"
 import { fetchAllPages } from "@/lib/utils/pagination"
 
-export interface GRSupplier {
-  id: string
-  name: string
-}
-
 export function useGRSuppliers(orgId: string) {
-  return useQuery<GRSupplier[]>({
+  return useQuery<Supplier[]>({
     queryKey: ["gr-suppliers", orgId],
-    queryFn: () => fetchAllPages<GRSupplier>(`orgs/${orgId}/suppliers/?is_active=true`, apiRequest),
+    queryFn: () => fetchAllPages<Supplier>(`orgs/${orgId}/suppliers/?is_active=true`, apiRequest),
     enabled: !!orgId,
+    staleTime: 5 * 60 * 1000,
   })
 }

@@ -12,6 +12,7 @@ from inventory.views import (
     BranchItemBulkDeactivateView,
     BranchItemCatalogView,
     BranchItemViewSet,
+    ClosePeriodViewSet,
     MasterItemViewSet,
     OrgItemViewSet,
     OrgMasterItemView,
@@ -20,8 +21,10 @@ from inventory.views import (
     StockTakeViewSet,
 )
 from purchase_orders.views import PurchaseOrderViewSet
+from quick_sales.views import QuickSaleViewSet
 from reports.views import PurchaseCostTrendView, StockValuationView
 from suppliers.views import SupplierViewSet
+from tenancy.invitation_views import CreateParentMemberView, CreateUserView
 from tenancy.org_views import OrgGovernanceView, OrgListCreateView
 from tenancy.parent_views import ParentMemberViewSet
 from tenancy.views import MemberSearchView, MemberViewSet
@@ -32,12 +35,14 @@ org_router.register("branch-items", BranchItemViewSet, basename="branch-item")
 org_router.register("inventory/stock", StockOnHandViewSet, basename="stock")
 org_router.register("inventory/movements", StockMovementViewSet, basename="movement")
 org_router.register("stock-takes", StockTakeViewSet, basename="stock-take")
+org_router.register("close-periods", ClosePeriodViewSet, basename="close-period")
 org_router.register("branches", BranchViewSet, basename="branch")
 org_router.register("members", MemberViewSet, basename="member")
 org_router.register("suppliers", SupplierViewSet, basename="supplier")
 org_router.register("purchase-orders", PurchaseOrderViewSet, basename="purchase-order")
 org_router.register("goods-receipts", GoodsReceiptViewSet, basename="goods-receipt")
 org_router.register("branch-transfers", BranchTransferViewSet, basename="branch-transfer")
+org_router.register("quick-sales", QuickSaleViewSet, basename="quick-sale")
 
 parent_router = DefaultRouter()
 parent_router.register("members", ParentMemberViewSet, basename="parent-member")
@@ -52,6 +57,8 @@ urlpatterns = [
     path("orgs/<uuid:org_id>/network-branches/", NetworkBranchView.as_view(), name="network-branches"),
     path("orgs/<uuid:org_id>/master-items/", OrgMasterItemView.as_view(), name="org-master-items"),
     path("orgs/<uuid:org_id>/members/search/", MemberSearchView.as_view(), name="member-search"),
+    path("orgs/<uuid:org_id>/create-user/", CreateUserView.as_view(), name="create-user"),
+    path("parent/create-parent-member/", CreateParentMemberView.as_view(), name="create-parent-member"),
     path(
         "orgs/<uuid:org_id>/reports/purchase-cost-trend/",
         PurchaseCostTrendView.as_view(),

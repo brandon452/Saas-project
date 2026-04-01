@@ -423,8 +423,8 @@ export default function CostTrendReportPage() {
           >
             <option value="">All suppliers</option>
             {(suppliersQuery.data ?? []).map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.name}
+              <option key={option.id} value={String(option.id)}>
+                {option.display_name}
               </option>
             ))}
           </select>

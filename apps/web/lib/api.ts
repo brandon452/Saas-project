@@ -1,14 +1,55 @@
 import { getCsrfHeader } from "./csrf"
 
 /**
- * isRefreshing prevents concurrent silent refresh loops.
- * If multiple requests return 401 simultaneously, only one
- * refresh attempt runs. This flag is intentional - do not remove it.
+ * refreshPromise coordinates concurrent silent refresh attempts.
+ * If multiple requests return 401 simultaneously, they all await
+ * the same refresh request before retrying.
  */
-let isRefreshing = false
+let refreshPromise: Promise<boolean> | null = null
 
 const SAFE_METHODS = ["GET", "HEAD", "OPTIONS"]
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? ""
+
+export class ApiError extends Error {
+  status: number
+  data: unknown
+
+  constructor(status: number, data: unknown, fallbackMessage?: string) {
+    super(fallbackMessage ?? `API error: ${status}`)
+    this.name = "ApiError"
+    this.status = status
+    this.data = data
+  }
+}
+
+export function getApiErrorDetail(error: unknown): string | string[] | null {
+  if (!(error instanceof ApiError) || !error.data || typeof error.data !== "object") {
+    return null
+  }
+
+  if ("detail" in error.data) {
+    const detail = (error.data as { detail?: unknown }).detail
+    if (typeof detail === "string" || Array.isArray(detail)) {
+      return detail as string | string[]
+    }
+  }
+
+  return null
+}
+
+export function getApiErrorMessage(error: unknown, fallback: string): string {
+  const detail = getApiErrorDetail(error)
+  if (Array.isArray(detail)) {
+    return detail.join(" ")
+  }
+  if (typeof detail === "string") {
+    return detail
+  }
+  if (error instanceof ApiError && error.status === 403) {
+    return "You do not have permission to perform this action."
+  }
+  return fallback
+}
 
 export async function apiRequest<T>(
   path: string,
@@ -46,37 +87,36 @@ export async function apiRequest<T>(
 
   const refreshable = cleanPath !== "auth/refresh/" && cleanPath !== "auth/login/"
 
-  if (res.status === 401 && refreshable && !isRefreshing) {
-    isRefreshing = true
-    try {
-      const refreshed = await attemptTokenRefresh()
-      if (refreshed) {
-        isRefreshing = false
-        return apiRequest<T>(path, options, orgId, branchId)
-      }
-    } catch {
-      // fall through
+  if (res.status === 401 && refreshable) {
+    const refreshed = await getRefreshPromise()
+    if (refreshed) {
+      return apiRequest<T>(path, options, orgId, branchId)
     }
-    isRefreshing = false
     redirectToLogin()
     throw new Error("Session expired.")
   }
 
-  if (res.status === 401 && refreshable && isRefreshing) {
-    redirectToLogin()
-    throw new Error("Session expired.")
+  const text = await res.text()
+  let data: unknown
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      throw new ApiError(res.status, { detail: "Invalid server response" }, "Invalid server response")
+    }
+  } else {
+    data = undefined
   }
 
   if (!res.ok) {
-    throw new Error(`API error: ${res.status}`)
+    throw new ApiError(res.status, data)
   }
 
   if (res.status === 204) {
     return undefined as T
   }
 
-  const text = await res.text()
-  return (text ? JSON.parse(text) : undefined) as T
+  return data as T
 }
 
 async function attemptTokenRefresh(): Promise<boolean> {
@@ -88,6 +128,17 @@ async function attemptTokenRefresh(): Promise<boolean> {
     },
   })
   return res.ok
+}
+
+async function getRefreshPromise(): Promise<boolean> {
+  if (!refreshPromise) {
+    refreshPromise = attemptTokenRefresh().catch(() => false)
+    refreshPromise.finally(() => {
+      refreshPromise = null
+    })
+  }
+
+  return refreshPromise
 }
 
 function redirectToLogin(): void {

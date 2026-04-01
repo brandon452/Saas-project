@@ -194,7 +194,7 @@ export function MasterItemPanel({
                         {updateMasterItem.isPending ? "Saving..." : "Save"}
                       </Button>
                       <Button
-                        variant="ghost"
+                        variant="outline"
                         disabled={isBusy}
                         onClick={() => {
                           setName(item.name)
@@ -219,8 +219,7 @@ export function MasterItemPanel({
                 <div className="flex gap-3">
                   {item.is_active ? (
                     <Button
-                      variant="ghost"
-                      className="text-red-600 hover:text-red-700"
+                      variant="destructive"
                       disabled={isBusy}
                       onClick={() => setConfirmOpen(true)}
                     >

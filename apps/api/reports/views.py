@@ -1,24 +1,46 @@
-from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models
+from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from goods_receipts.models import GoodsReceiptLine
-from inventory.models import OrgItem, StockOnHand
+from inventory.models import (
+    InventoryClosePeriod,
+    InventoryCloseSnapshot,
+    InventoryCostState,
+    OrgItem,
+    StockOnHand,
+)
 from tenancy.models import Organization
 from tenancy.permissions import IsOrgOwnerOrAdmin, IsParentMember, get_parent_membership
 
 from .serializers import CostTrendPointSerializer, StockValuationRowSerializer, StockValuationSummarySerializer
 
 
+class StockValuationPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = "page_size"
+    max_page_size = 200
+
+
 class StockValuationView(APIView):
+    Q2 = Decimal("0.01")
+    pagination_class = StockValuationPagination
+
+    @property
+    def paginator(self):
+        if not hasattr(self, "_paginator"):
+            self._paginator = self.pagination_class()
+        return self._paginator
+
     def get_permissions(self):
         if get_parent_membership(self.request):
             return [IsAuthenticated(), IsParentMember()]
@@ -35,12 +57,91 @@ class StockValuationView(APIView):
         request.parent_role = parent_membership.role if parent_membership else None
         super().initial(request, *args, **kwargs)
 
-    def get(self, request, org_id=None, *args, **kwargs):
+    def _empty_response(self):
+        return Response({
+            "summary": StockValuationSummarySerializer({
+                "total_latest_valuation": None,
+                "total_average_valuation": None,
+                "item_count": 0,
+                "branch_count": 0,
+            }).data,
+            "count": 0,
+            "next": None,
+            "previous": None,
+            "results": [],
+        })
+
+    def _build_summary(self, rows):
+        """Compute totals over a list of row dicts."""
+        total_latest = Decimal("0")
+        total_average = Decimal("0")
+        has_latest = False
+        has_average = False
+        item_ids = set()
+        branch_ids = set()
+
+        for row in rows:
+            qty = row["quantity_on_hand"]
+            latest_cost = row["latest_unit_cost"]
+            avg_cost = row["average_unit_cost"]
+
+            if latest_cost is not None:
+                total_latest += (qty * latest_cost).quantize(self.Q2)
+                has_latest = True
+            if avg_cost is not None:
+                total_average += (qty * avg_cost).quantize(self.Q2)
+                has_average = True
+
+            item_ids.add(row["item_id"])
+            branch_ids.add(row["branch_id"])
+
+        return {
+            "total_latest_valuation": total_latest if has_latest else None,
+            "total_average_valuation": total_average if has_average else None,
+            "item_count": len(item_ids),
+            "branch_count": len(branch_ids),
+        }
+
+    def _format_row(self, row):
+        qty = row["quantity_on_hand"]
+        latest_cost = row["latest_unit_cost"]
+        avg_cost = row["average_unit_cost"]
+        latest_val = (qty * latest_cost).quantize(self.Q2) if latest_cost is not None else None
+        avg_val = (qty * avg_cost).quantize(self.Q2) if avg_cost is not None else None
+        return {
+            "item_id": row["item_id"],
+            "item_name": row["item_name"],
+            "item_sku": row["item_sku"],
+            "branch_id": row["branch_id"],
+            "branch_name": row["branch_name"],
+            "quantity_on_hand": qty,
+            "latest_unit_cost": latest_cost.quantize(self.Q2) if latest_cost is not None else None,
+            "latest_valuation": latest_val,
+            "average_unit_cost": avg_cost.quantize(self.Q2) if avg_cost is not None else None,
+            "average_valuation": avg_val,
+        }
+
+    def _live_queryset(self, request):
+        """Return an annotated StockOnHand queryset with cost data."""
+        cost_subquery_base = InventoryCostState.objects.filter(
+            organization=request.org,
+            branch=OuterRef("branch"),
+            item=OuterRef("item"),
+        )
+
         soh_qs = (
             StockOnHand.objects
             .for_org(request.org)
             .filter(quantity__gt=0)
             .select_related("item__master_item", "branch")
+            .annotate(
+                _latest_unit_cost=Subquery(
+                    cost_subquery_base.values("latest_unit_cost")[:1]
+                ),
+                _average_unit_cost=Subquery(
+                    cost_subquery_base.values("average_unit_cost")[:1]
+                ),
+            )
         )
 
         branch_id = request.query_params.get("branch")
@@ -55,127 +156,104 @@ class StockValuationView(APIView):
                 | models.Q(item__name__icontains=search)
             )
 
-        soh_list = list(soh_qs)
-        relevant_item_ids = {soh.item_id for soh in soh_list}
-        relevant_branch_ids = {soh.branch_id for soh in soh_list}
+        return soh_qs
 
-        if not soh_list:
-            return Response({
-                "summary": StockValuationSummarySerializer({
-                    "total_latest_valuation": None,
-                    "total_average_valuation": None,
-                    "item_count": 0,
-                    "branch_count": 0,
-                }).data,
-                "results": [],
-            })
-
-        receipt_lines = (
-            GoodsReceiptLine.objects
-            .filter(
-                receipt__organization=request.org,
-                unit_cost__isnull=False,
-                receipt__branch_id__in=relevant_branch_ids,
-            )
-            .filter(
-                models.Q(po_line__item_id__in=relevant_item_ids)
-                | models.Q(item_id__in=relevant_item_ids)
-            )
-            .values(
-                "receipt__branch_id",
-                "po_line__item_id",
-                "item_id",
-                "quantity_received",
-                "unit_cost",
-                "receipt__received_at",
-            )
-        )
-
-        avco_numerator = defaultdict(Decimal)
-        avco_denominator = defaultdict(Decimal)
-        latest_cost_map = {}
-
-        for line in receipt_lines:
-            item_id = line["po_line__item_id"] or line["item_id"]
-            b_id = line["receipt__branch_id"]
-            key = (str(item_id), str(b_id))
-            qty = Decimal(str(line["quantity_received"]))
-            cost = Decimal(str(line["unit_cost"]))
-            received_at = line["receipt__received_at"]
-
-            avco_numerator[key] += qty * cost
-            avco_denominator[key] += qty
-
-            if key not in latest_cost_map or received_at > latest_cost_map[key][0]:
-                latest_cost_map[key] = (received_at, cost)
-
-        avco_map = {
-            key: (avco_numerator[key] / avco_denominator[key]).quantize(Decimal("0.01"))
-            for key in avco_numerator
-            if avco_denominator[key] > 0
+    def _soh_to_row(self, soh):
+        return {
+            "item_id": soh.item_id,
+            "item_name": soh.item.display_name,
+            "item_sku": soh.item.master_item.sku,
+            "branch_id": soh.branch_id,
+            "branch_name": soh.branch.name,
+            "quantity_on_hand": soh.quantity,
+            "latest_unit_cost": soh._latest_unit_cost,
+            "average_unit_cost": soh._average_unit_cost,
         }
 
-        latest_map = {key: val[1] for key, val in latest_cost_map.items()}
+    def _snapshot_queryset(self, request, period):
+        qs = (
+            InventoryCloseSnapshot.objects
+            .filter(organization=request.org, period=period, quantity_on_hand__gt=0)
+            .select_related("item__master_item", "branch")
+        )
 
-        results = []
-        total_latest = Decimal("0")
-        total_average = Decimal("0")
-        has_latest = False
-        has_average = False
-        item_ids = set()
-        branch_ids = set()
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            qs = qs.filter(branch_id=branch_id)
 
-        for soh in soh_list:
-            key = (str(soh.item_id), str(soh.branch_id))
-            qty = soh.quantity
+        search = request.query_params.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                models.Q(item__master_item__name__icontains=search)
+                | models.Q(item__master_item__sku__icontains=search)
+                | models.Q(item__name__icontains=search)
+            )
 
-            latest_cost = latest_map.get(key)
-            avg_cost = avco_map.get(key)
+        return qs
 
-            latest_val = (qty * latest_cost).quantize(Decimal("0.01")) if latest_cost is not None else None
-            avg_val = (qty * avg_cost).quantize(Decimal("0.01")) if avg_cost is not None else None
+    def _snapshot_to_row(self, snap):
+        return {
+            "item_id": snap.item_id,
+            "item_name": snap.item.display_name,
+            "item_sku": snap.item.master_item.sku,
+            "branch_id": snap.branch_id,
+            "branch_name": snap.branch.name,
+            "quantity_on_hand": snap.quantity_on_hand,
+            "latest_unit_cost": snap.latest_unit_cost,
+            "average_unit_cost": snap.average_unit_cost,
+        }
 
-            if latest_val is not None:
-                total_latest += latest_val
-                has_latest = True
-            if avg_val is not None:
-                total_average += avg_val
-                has_average = True
+    def _paginate_and_respond(self, request, queryset, row_fn):
+        # Compute full-set summary before pagination
+        full_rows = [row_fn(obj) for obj in queryset]
+        if not full_rows:
+            return self._empty_response()
 
-            item_ids.add(soh.item_id)
-            branch_ids.add(soh.branch_id)
+        summary = self._build_summary(full_rows)
 
-            results.append({
-                "item_id": soh.item_id,
-                "item_name": soh.item.display_name,
-                "item_sku": soh.item.master_item.sku,
-                "branch_id": soh.branch_id,
-                "branch_name": soh.branch.name,
-                "quantity_on_hand": qty,
-                "latest_unit_cost": latest_cost,
-                "latest_valuation": latest_val,
-                "average_unit_cost": avg_cost,
-                "average_valuation": avg_val,
-            })
-
-        results.sort(
+        # Sort: items with a latest_valuation first, descending by value
+        full_rows.sort(
             key=lambda r: (
-                r["latest_valuation"] is None,
-                -(r["latest_valuation"] or Decimal("0")),
+                (r["latest_unit_cost"] is None or r["quantity_on_hand"] == 0),
+                -((r["latest_unit_cost"] or Decimal("0")) * r["quantity_on_hand"]),
             )
         )
 
-        summary = {
-            "total_latest_valuation": total_latest if has_latest else None,
-            "total_average_valuation": total_average if has_average else None,
-            "item_count": len(item_ids),
-            "branch_count": len(branch_ids),
-        }
+        page = self.paginator.paginate_queryset(full_rows, request, view=self)
+        formatted = [self._format_row(r) for r in page]
+        serialized = StockValuationRowSerializer(formatted, many=True).data
 
-        return Response({
-            "summary": StockValuationSummarySerializer(summary).data,
-            "results": StockValuationRowSerializer(results, many=True).data,
-        })
+        paginated = self.paginator.get_paginated_response(serialized)
+        paginated.data["summary"] = StockValuationSummarySerializer(summary).data
+        return paginated
+
+    def get(self, request, org_id=None, *args, **kwargs):
+        period_id = request.query_params.get("period_id")
+        if period_id:
+            try:
+                period = InventoryClosePeriod.objects.get(
+                    pk=period_id,
+                    organization=request.org,
+                )
+            except (InventoryClosePeriod.DoesNotExist, DjangoValidationError, ValueError):
+                raise ValidationError({"period_id": "Period not found or does not belong to this organisation."})
+
+            if period.status == InventoryClosePeriod.OPEN:
+                raise ValidationError({"detail": "Period has not been closed; no authoritative snapshot exists."})
+            if period.status == InventoryClosePeriod.CLOSING:
+                raise ValidationError({"detail": "Period is currently closing."})
+
+            return self._paginate_and_respond(
+                request,
+                self._snapshot_queryset(request, period),
+                self._snapshot_to_row,
+            )
+
+        return self._paginate_and_respond(
+            request,
+            self._live_queryset(request),
+            self._soh_to_row,
+        )
 
 
 class PurchaseCostTrendView(APIView):

@@ -559,6 +559,18 @@ class GoodsReceiptApiTests(APITestCase):
             StockLedger.objects.for_org(self.acme).filter(branch=self.branch, movement_type=StockLedger.MOVEMENT_RECEIPT).count(),
             2,
         )
+        self.assertEqual(mocked_record.call_args_list[0].kwargs["unit_cost"], self.line_a.unit_price)
+        self.assertEqual(mocked_record.call_args_list[1].kwargs["unit_cost"], self.line_b.unit_price)
+
+    def test_direct_receipt_checks_period_before_posting(self):
+        self._auth(self.owner)
+        with patch("goods_receipts.services.assert_inventory_period_open") as mocked_period_check:
+            response = self._post_direct(
+                lines=[{"item": self.item_a.id, "quantity_received": 1, "unit_cost": "4.25"}],
+            )
+
+        self.assertEqual(response.status_code, 201)
+        mocked_period_check.assert_called_once()
 
     def test_purchase_order_status_reaches_fully_received(self):
         self._auth(self.owner)

@@ -2,6 +2,7 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -33,6 +34,7 @@ INSTALLED_APPS = [
     "purchase_orders",
     "goods_receipts",
     "branch_transfers",
+    "quick_sales",
     "reports",
 ]
 
@@ -177,8 +179,7 @@ CACHES = {
 
 RATELIMIT_USE_CACHE = "default"
 
-
-from corsheaders.defaults import default_headers
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 CORS_ALLOW_HEADERS = list(default_headers) + ["x-branch-id"]
 

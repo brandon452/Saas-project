@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
+from django_ratelimit.core import is_ratelimited
 from drf_spectacular.utils import extend_schema, extend_schema_view
-from rest_framework import viewsets
+from rest_framework import status, viewsets
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.filters import OrderingFilter
 from rest_framework.permissions import IsAuthenticated
@@ -61,6 +62,14 @@ class MemberViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelViewSe
         if self.action == "partial_update":
             return MemberUpdateSerializer
         return MemberSerializer
+
+    def create(self, request, *args, **kwargs):
+        if is_ratelimited(request, group="member_create", key="user", rate="10/m", method="POST", increment=True):
+            return Response(
+                {"detail": "Too many requests. Please wait before adding another member."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         if getattr(self.request, "parent_role", None) == "PARENT_ADMIN":

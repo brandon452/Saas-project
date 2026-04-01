@@ -11,5 +11,5 @@ export function getCsrfHeader(): Record<string, string> {
 
   if (!match) return {}
 
-  return { "X-CSRFToken": match.split("=")[1] }
+  return { "X-CSRFToken": match.slice("csrftoken=".length) }
 }

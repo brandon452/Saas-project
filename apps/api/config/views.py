@@ -1,3 +1,4 @@
+import logging
 import os
 
 from django.conf import settings
@@ -6,6 +7,8 @@ from django.http import Http404, HttpResponse
 from django.views import View
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+logger = logging.getLogger(__name__)
 
 
 class HealthView(APIView):
@@ -20,12 +23,28 @@ class HealthView(APIView):
         except Exception:
             db_status = "down"
 
+        redis_status = "ok"
+        try:
+            try:
+                from django_redis import get_redis_connection
+                redis_conn = get_redis_connection("default")
+                redis_conn.ping()
+            except ImportError:
+                # django-redis not installed; use Django's built-in cache backend
+                from django.core.cache import cache
+                cache.get("__health_check__")
+        except Exception:
+            logger.error("Redis health check failed", exc_info=True)
+            redis_status = "down"
+
         org = getattr(request, "org", None)
+        overall_status = "ok" if db_status == "ok" else "degraded"
         return Response(
             {
-                "status": "ok",
+                "status": overall_status,
                 "organization": org.slug if org else None,
                 "db": db_status,
+                "redis": redis_status,
             }
         )
 

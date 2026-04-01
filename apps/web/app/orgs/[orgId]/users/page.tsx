@@ -23,8 +23,7 @@ import { useOrg } from "@/lib/hooks/useOrg"
 import type { Member, MemberRole } from "@/lib/types/members"
 
 function getDisplayName(member: Member) {
-  const fullName = `${member.user.first_name} ${member.user.last_name}`.trim()
-  return fullName || member.user.email
+  return `${member.user.first_name} ${member.user.last_name}`.trim() || "—"
 }
 
 function getRoleBadgeVariant(role: MemberRole) {
@@ -44,7 +43,9 @@ export default function UsersPage() {
   const [addOpen, setAddOpen] = useState(false)
 
   const isOwner = role === "OWNER"
-  const canView = !isParentUser && canAccess(["OWNER", "ADMIN"])
+  const isParentAdmin = user?.parent_role === "PARENT_ADMIN"
+  const canView = (!isParentUser && canAccess(["OWNER", "ADMIN"])) || isParentAdmin
+  const canAddMembers = isOwner || isParentAdmin
   const isActiveParam = searchParams.get("is_active")
   const showInactive = isActiveParam === "false"
 
@@ -153,7 +154,7 @@ export default function UsersPage() {
             View and manage organisation members and their access levels.
           </p>
         </div>
-        {isOwner ? <Button onClick={() => setAddOpen(true)}>Add Member</Button> : null}
+        {canAddMembers ? <Button onClick={() => setAddOpen(true)}>Add Member</Button> : null}
       </div>
 
       <div className="rounded-xl border border-border bg-card p-4">
@@ -238,8 +239,13 @@ export default function UsersPage() {
         </CardContent>
       </Card>
 
-      {isOwner ? (
-        <AddMemberDialog orgId={orgId} open={addOpen} onOpenChange={setAddOpen} />
+      {canAddMembers ? (
+        <AddMemberDialog
+          orgId={orgId}
+          open={addOpen}
+          onOpenChange={setAddOpen}
+          currentRole={isParentAdmin ? "PARENT_ADMIN" : "OWNER"}
+        />
       ) : null}
 
       <MemberPanel

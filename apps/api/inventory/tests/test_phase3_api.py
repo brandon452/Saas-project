@@ -63,6 +63,7 @@ class InventoryPhase3ApiTests(APITestCase):
             "item": str(item_id),
             "quantity": "2.0000",
             "movement_type": "RECEIPT",
+            "unit_cost": "10.0000",
             "reference_type": "",
             "reference_id": "",
             "reason": "",
@@ -108,6 +109,7 @@ class InventoryPhase3ApiTests(APITestCase):
             item=self.acme_item_1,
             quantity=Decimal("3.0000"),
             movement_type="RECEIPT",
+            unit_cost=Decimal("10.0000"),
             performed_by=self.acme_user,
             idempotency_key="stock-a-1",
         )
@@ -117,6 +119,7 @@ class InventoryPhase3ApiTests(APITestCase):
             item=self.acme_item_2,
             quantity=Decimal("4.0000"),
             movement_type="RECEIPT",
+            unit_cost=Decimal("10.0000"),
             performed_by=self.acme_user,
             idempotency_key="stock-b-1",
         )
@@ -126,6 +129,7 @@ class InventoryPhase3ApiTests(APITestCase):
             item=self.acme_item_1,
             quantity=Decimal("5.0000"),
             movement_type="RECEIPT",
+            unit_cost=Decimal("10.0000"),
             performed_by=self.acme_user,
             idempotency_key="stock-c-1",
         )
@@ -172,7 +176,8 @@ class InventoryPhase3ApiTests(APITestCase):
                 branch=self.acme_branch if i % 2 == 0 else self.acme_branch_2,
                 item=self.acme_item_1 if i % 3 == 0 else self.acme_item_2,
                 quantity=Decimal("1.0000"),
-                movement_type="RECEIPT" if i % 2 == 0 else "ADJUSTMENT",
+                movement_type="RECEIPT",
+                unit_cost=Decimal("10.0000"),
                 performed_by=self.acme_user,
                 reference_type="PO" if i % 2 == 0 else "SO",
                 reference_id=f"ref-{i}",
@@ -319,6 +324,7 @@ class InventoryPhase3ApiTests(APITestCase):
                 item=self.acme_item_1 if i % 3 == 0 else self.acme_item_2,
                 quantity=Decimal("1.0000"),
                 movement_type="RECEIPT",
+                unit_cost=Decimal("10.0000"),
                 performed_by=self.acme_user,
                 idempotency_key=f"nplus1-{i}",
             )
@@ -332,4 +338,3 @@ class InventoryPhase3ApiTests(APITestCase):
             movement_response = self.client.get(f"/api/orgs/{self.acme.id}/inventory/movements/", HTTP_HOST=self._host("acme"))
         self.assertEqual(movement_response.status_code, 200)
         self.assertLessEqual(len(movement_ctx.captured_queries), 10)
-

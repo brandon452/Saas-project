@@ -147,7 +147,7 @@ export function ReceiveTransferForm({
       ) : null}
 
       <div className="flex items-center justify-end gap-3">
-        <Button variant="ghost" onClick={onCancel} disabled={isPending}>
+        <Button variant="outline" onClick={onCancel} disabled={isPending}>
           Cancel
         </Button>
         <Button onClick={handleSubmit} disabled={isPending || hasInvalidLines || !hasAnyReceived}>

@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import caches
@@ -9,7 +10,7 @@ from rest_framework.test import APIClient, APITestCase
 from rest_framework_simplejwt.tokens import AccessToken
 
 from auth.authentication import CookieJWTAuthentication
-from auth.models import AuthAuditLog
+from auth.models import AuthAuditLog, PasswordSetToken
 from branches.models import Branch
 from inventory.models import MasterItem, OrgItem
 from tenancy.models import Organization, OrganizationMember, ParentCompanyMember
@@ -52,6 +53,24 @@ class CookieAuthTests(APITestCase):
     def _csrf_header(self):
         token = self.client.cookies.get("csrftoken")
         return {"HTTP_X_CSRFTOKEN": token.value if token else ""}
+
+    def _create_password_set_token(self):
+        User = get_user_model()
+        invited_user = User.objects.create_user(
+            username="invite_user",
+            email="invite@example.com",
+            first_name="Invite",
+            last_name="User",
+            password=None,
+        )
+        invited_user.set_unusable_password()
+        invited_user.save(update_fields=["password"])
+        token = PasswordSetToken.objects.create(
+            user=invited_user,
+            organization=self.org,
+            expires_at=timezone.now() + timedelta(days=1),
+        )
+        return invited_user, token
 
     def test_login_sets_auth_and_csrf_cookies(self):
         response = self._login()
@@ -152,6 +171,7 @@ class CookieAuthTests(APITestCase):
                 "item": str(self.item.id),
                 "quantity": "1.0000",
                 "movement_type": "RECEIPT",
+                "unit_cost": "5.0000",
             },
             format="json",
             HTTP_X_BRANCH_ID=str(self.branch.id),
@@ -183,3 +203,42 @@ class CookieAuthTests(APITestCase):
 
         response = self.client.post("/api/auth/logout/", {}, format="json", **self._csrf_header())
         self.assertEqual(response.status_code, 200)
+
+    def test_set_password_consumes_token_and_rejects_reuse(self):
+        invited_user, token = self._create_password_set_token()
+
+        response = self.client.post(
+            f"/api/auth/set-password/{token.token}/accept/",
+            {"password": "Str0ngPassw0rd!"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        invited_user.refresh_from_db()
+        token.refresh_from_db()
+        self.assertTrue(invited_user.has_usable_password())
+        self.assertIsNotNone(token.used_at)
+
+        reuse = self.client.post(
+            f"/api/auth/set-password/{token.token}/accept/",
+            {"password": "An0therStrongPass!"},
+            format="json",
+        )
+        self.assertEqual(reuse.status_code, 400)
+        self.assertEqual(reuse.data["detail"], "This link has already been used.")
+
+    def test_set_password_accept_locks_token_row_before_consuming(self):
+        _, token = self._create_password_set_token()
+
+        with patch(
+            "auth.views.PasswordSetToken.objects.select_for_update",
+            wraps=PasswordSetToken.objects.select_for_update,
+        ) as select_for_update:
+            response = self.client.post(
+                f"/api/auth/set-password/{token.token}/accept/",
+                {"password": "Str0ngPassw0rd!"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        select_for_update.assert_called_once()

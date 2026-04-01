@@ -49,7 +49,7 @@ export default function GoodsReceiptsPage() {
   const suppliersQuery = useGRSuppliers(orgId)
 
   const branchMap = new Map((branchesQuery.data ?? []).map((item) => [item.id, item.name]))
-  const supplierMap = new Map((suppliersQuery.data ?? []).map((item) => [item.id, item.name]))
+  const supplierMap = new Map((suppliersQuery.data ?? []).map((item) => [String(item.id), item.display_name]))
   const errorMessage = receiptsQuery.error instanceof Error ? receiptsQuery.error.message : ""
   const currentPage = Number.parseInt(page, 10) || 1
 

@@ -109,6 +109,7 @@ class BranchTransferLine(models.Model):
     )
     quantity_sent = models.PositiveIntegerField()
     quantity_received = models.PositiveIntegerField(null=True, blank=True)
+    dispatched_unit_cost = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
 
     class Meta:
         constraints = [

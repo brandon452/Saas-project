@@ -62,6 +62,7 @@ class RolePolicyTests(APITestCase):
             item=self.acme_item,
             quantity=Decimal("5.0000"),
             movement_type="RECEIPT",
+            unit_cost=Decimal("10.0000"),
             performed_by=self.owner,
             idempotency_key="seed-stock-1",
         )
@@ -140,6 +141,7 @@ class RolePolicyTests(APITestCase):
                     "item": str(self.acme_item.id),
                     "quantity": "1.0000",
                     "movement_type": "RECEIPT",
+                    "unit_cost": "5.0000",
                     "idempotency_key": f"mov-{user.username}",
                 },
                 format="json",

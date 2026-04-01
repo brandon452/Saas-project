@@ -10,6 +10,7 @@ from inventory.models import BranchItem, MasterItem, OrgItem, StockLedger, Stock
 from inventory.services import (
     approve_stock_take,
     cancel_stock_take,
+    record_stock_movement,
     reopen_stock_take,
     start_stock_take,
     submit_stock_take,
@@ -76,17 +77,25 @@ class StockTakeApiTests(APITestCase):
         BranchItem.objects.create(branch=self.branch_two, org_item=self.item_c, is_active=True)
         BranchItem.objects.create(branch=self.branch, org_item=self.item_c, is_active=False)
 
-        StockOnHand.objects.create(
-            organization=self.org,
+        record_stock_movement(
+            org=self.org,
             branch=self.branch,
             item=self.item_a,
             quantity=Decimal("8.0000"),
+            movement_type=StockLedger.MOVEMENT_RECEIPT,
+            unit_cost=Decimal("5.0000"),
+            performed_by=self.owner,
+            idempotency_key="stock-take-seed-a",
         )
-        StockOnHand.objects.create(
-            organization=self.org,
+        record_stock_movement(
+            org=self.org,
             branch=self.branch,
             item=self.item_b,
             quantity=Decimal("3.0000"),
+            movement_type=StockLedger.MOVEMENT_RECEIPT,
+            unit_cost=Decimal("7.0000"),
+            performed_by=self.owner,
+            idempotency_key="stock-take-seed-b",
         )
 
     def _auth(self, user):
@@ -611,11 +620,15 @@ class StockTakeServiceTests(TransactionTestCase):
         )
         BranchItem.objects.create(branch=self.branch, org_item=self.item_a, is_active=True)
         BranchItem.objects.create(branch=self.branch, org_item=self.item_b, is_active=True)
-        StockOnHand.objects.create(
-            organization=self.org,
+        record_stock_movement(
+            org=self.org,
             branch=self.branch,
             item=self.item_a,
             quantity=Decimal("4.0000"),
+            movement_type=StockLedger.MOVEMENT_RECEIPT,
+            unit_cost=Decimal("6.0000"),
+            performed_by=self.user,
+            idempotency_key="svc-stock-take-seed-a",
         )
 
     def test_start_submit_reopen_cancel_and_approve_use_row_locks(self):

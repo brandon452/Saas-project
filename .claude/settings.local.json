@@ -17,7 +17,20 @@
       "Bash(python -m pytest inventory/tests/ -x -q --no-header)",
       "Bash(python manage.py test inventory.tests.test_stock_takes --verbosity=1 --keepdb)",
       "Bash(python manage.py test inventory --verbosity=2 --keepdb)",
-      "Bash(python manage.py test inventory.tests.test_phase3_api.InventoryPhase3ApiTests.test_movement_get_filters_ordering_and_pagination --verbosity=2 --keepdb)"
+      "Bash(python manage.py test inventory.tests.test_phase3_api.InventoryPhase3ApiTests.test_movement_get_filters_ordering_and_pagination --verbosity=2 --keepdb)",
+      "Bash(wc -l /c/Users/Admin/Documents/Saas project/apps/api/inventory/tests/*.py)",
+      "Bash(find /c/Users/Admin/Documents/Saas project/apps/api/inventory/tests -name \"*.py\" -exec wc -l {} +)",
+      "Bash(.venv/Scripts/python manage.py makemigrations purchase_orders inventory --name \"constraints_and_stock_take_unique_in_progress\")",
+      "Bash(.venv/Scripts/python manage.py test --verbosity=2)",
+      "Bash(.venv/Scripts/python manage.py test --verbosity=2 --keepdb)",
+      "Bash(.venv/Scripts/python manage.py test --verbosity=1 --keepdb)",
+      "Bash(.venv/Scripts/python manage.py test inventory.tests.test_stock_take_status_improvements.StockTakeImprovementsTests.test_approve_response_reflects_correct_status --verbosity=2 --keepdb)",
+      "Bash(.venv/Scripts/python manage.py test inventory.tests.test_stock_take_status_improvements inventory.tests.test_branch_items --verbosity=1 --keepdb)",
+      "Bash(.venv/Scripts/python manage.py test reports.tests --verbosity=1 --keepdb)",
+      "Bash(.venv/Scripts/python manage.py test branch_transfers.tests goods_receipts.tests auth.tests purchase_orders.tests --verbosity=1 --keepdb)",
+      "Bash(.venv/Scripts/python manage.py test tenancy.tests inventory.tests.test_movements inventory.tests.test_negative_stock inventory.tests.test_phase3_api inventory.tests.test_stock_takes inventory.tests.test_stock_take_bulk_update --verbosity=1 --keepdb)",
+      "Bash(.venv/Scripts/python manage.py test --verbosity=0 --keepdb)",
+      "Bash(.venv/Scripts/python -c \"from django_ratelimit.core import is_ratelimited; help\\(is_ratelimited\\)\")"
     ]
   }
 }

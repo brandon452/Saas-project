@@ -160,9 +160,9 @@ export default function NewPurchaseOrderPage() {
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none"
             >
               <option value="">Select supplier</option>
-              {(suppliersQuery.data ?? []).map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.name}
+              {(suppliersQuery.data ?? []).filter((s) => s.is_active).map((option) => (
+                <option key={option.id} value={String(option.id)}>
+                  {option.display_name}
                 </option>
               ))}
             </select>
@@ -231,8 +231,7 @@ export default function NewPurchaseOrderPage() {
                     {line.persisted ? "Saved" : "Pending"}
                   </span>
                   <Button
-                    variant="ghost"
-                    className="text-red-600 hover:text-red-700"
+                    variant="destructive"
                     onClick={() => removePendingLine(line.localId)}
                     disabled={isLocked}
                   >

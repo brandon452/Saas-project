@@ -64,8 +64,8 @@ export function POFilters({
         >
           <option value="">All suppliers</option>
           {suppliers.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.name}
+            <option key={option.id} value={String(option.id)}>
+              {option.display_name}{option.is_active === false ? " (inactive)" : ""}
             </option>
           ))}
         </select>

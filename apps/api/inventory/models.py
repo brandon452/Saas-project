@@ -130,6 +130,8 @@ class StockLedger(TenantModel):
     )
     occurred_at = models.DateTimeField(null=True, blank=True)
     idempotency_key = models.CharField(max_length=255, null=True, blank=True, db_index=True)
+    unit_cost   = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    value_delta = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
@@ -251,6 +253,13 @@ class StockTake(TenantModel):
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "branch"],
+                condition=Q(status="IN_PROGRESS"),
+                name="unique_in_progress_stock_take_per_branch",
+            )
+        ]
 
     def clean(self):
         if self.branch_id and self.organization_id:
@@ -313,3 +322,77 @@ class StockTakeLine(models.Model):
 
     def __str__(self):
         return f"StockTakeLine {self.stock_take_id} - {self.org_item}"
+
+
+class InventoryCostState(TenantModel):
+    branch            = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="cost_states")
+    item              = models.ForeignKey(OrgItem, on_delete=models.PROTECT, related_name="cost_states")
+    average_unit_cost = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    latest_unit_cost  = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    last_receipt_at   = models.DateTimeField(null=True, blank=True)
+    updated_at        = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("organization", "branch", "item")]
+
+
+class InventoryClosePeriod(TenantModel):
+    OPEN    = "OPEN"
+    CLOSING = "CLOSING"
+    CLOSED  = "CLOSED"
+
+    STATUS_CHOICES = [
+        (OPEN, "Open"),
+        (CLOSING, "Closing"),
+        (CLOSED, "Closed"),
+    ]
+
+    start_date  = models.DateField()
+    end_date    = models.DateField()
+    status      = models.CharField(max_length=10, choices=STATUS_CHOICES, default=OPEN, db_index=True)
+    closed_at   = models.DateTimeField(null=True, blank=True)
+    closed_by   = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="closed_periods",
+    )
+    reopened_at = models.DateTimeField(null=True, blank=True)
+    reopened_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="reopened_periods",
+    )
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        unique_together = [("organization", "start_date", "end_date")]
+        indexes = [
+            models.Index(fields=["organization", "start_date"], name="inv_closeperiod_org_start_idx"),
+            models.Index(fields=["organization", "end_date"],   name="inv_closeperiod_org_end_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=Q(status__in=["OPEN", "CLOSING", "CLOSED"]),
+                name="inventory_close_period_valid_status",
+            )
+        ]
+
+
+class InventoryCloseSnapshot(TenantModel):
+    period            = models.ForeignKey(InventoryClosePeriod, on_delete=models.CASCADE, related_name="snapshots")
+    branch            = models.ForeignKey(Branch, on_delete=models.PROTECT)
+    item              = models.ForeignKey(OrgItem, on_delete=models.PROTECT)
+    quantity_on_hand  = models.DecimalField(max_digits=12, decimal_places=4)
+    average_unit_cost = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    latest_unit_cost  = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    average_valuation = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    latest_valuation  = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    valuation_basis   = models.CharField(
+        max_length=10, default="AVCO",
+        choices=[("AVCO", "AVCO"), ("LATEST", "Latest")],
+    )
+
+    class Meta:
+        unique_together = [("period", "branch", "item")]
+        indexes = [
+            models.Index(fields=["period", "branch"], name="inv_snap_period_branch_idx"),
+            models.Index(fields=["period", "item"],   name="inv_snap_period_item_idx"),
+        ]

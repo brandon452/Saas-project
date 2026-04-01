@@ -160,7 +160,7 @@ export function BranchPanel({
                     {updateBranch.isPending ? "Saving..." : "Save"}
                   </Button>
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     onClick={resetDrafts}
                     disabled={updateBranch.isPending}
                   >

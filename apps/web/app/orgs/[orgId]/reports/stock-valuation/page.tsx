@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
@@ -16,6 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { useClosePeriods } from "@/lib/hooks/close-periods/useClosePeriods"
 import { usePOBranches } from "@/lib/hooks/purchase-orders/usePOBranches"
 import { useStockValuation } from "@/lib/hooks/reports/useStockValuation"
 import { useOrg } from "@/lib/hooks/useOrg"
@@ -34,7 +35,31 @@ function formatCost(value: string | null): string {
   return parseFloat(value).toFixed(2)
 }
 
-function exportCSV(data: StockValuationRow[]) {
+function formatPeriodDate(dateStr: string): string {
+  const [year, month, day] = dateStr.split("-").map(Number)
+  return new Date(year, month - 1, day).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  })
+}
+
+function formatPeriodLabel(start: string, end: string): string {
+  return `${formatPeriodDate(start)} – ${formatPeriodDate(end)}`
+}
+
+function formatDateTime(isoString: string | null): string {
+  if (!isoString) return "—"
+  return new Date(isoString).toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
+function exportCSV(data: StockValuationRow[], filename: string) {
   const escape = (v: string) => (v.includes(",") ? `"${v}"` : v)
   const headers = [
     "Item",
@@ -61,7 +86,7 @@ function exportCSV(data: StockValuationRow[]) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement("a")
   a.href = url
-  a.download = `stock-valuation-${new Date().toISOString().slice(0, 10)}.csv`
+  a.download = filename
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -76,6 +101,7 @@ export default function StockValuationPage() {
 
   const branch = searchParams.get("branch") ?? ""
   const search = searchParams.get("search") ?? ""
+  const periodId = searchParams.get("period_id") ?? ""
 
   const [searchDraft, setSearchDraft] = useState(search)
 
@@ -100,23 +126,33 @@ export default function StockValuationPage() {
     return () => window.clearTimeout(timer)
   }, [searchDraft, pathname, router, searchParams])
 
+  function updateParam(key: string, value: string) {
+    const params = new URLSearchParams(searchParams.toString())
+    if (value) params.set(key, value)
+    else params.delete(key)
+    const qs = params.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname)
+  }
+
   const branchesQuery = usePOBranches(canView ? orgId : "")
+  const periodsQuery = useClosePeriods({ orgId: canView ? orgId : "" })
+
+  const closedPeriods = useMemo(
+    () => (periodsQuery.data ?? []).filter((p) => p.status === "CLOSED"),
+    [periodsQuery.data],
+  )
+
+  const selectedPeriod = useMemo(
+    () => closedPeriods.find((p) => p.id === periodId) ?? null,
+    [closedPeriods, periodId],
+  )
+
   const reportQuery = useStockValuation({
     orgId: canView ? orgId : "",
     branch: branch || undefined,
     search: search || undefined,
+    periodId: periodId || undefined,
   })
-
-  function updateBranch(value: string) {
-    const params = new URLSearchParams(searchParams.toString())
-    if (value) {
-      params.set("branch", value)
-    } else {
-      params.delete("branch")
-    }
-    const qs = params.toString()
-    router.replace(qs ? `${pathname}?${qs}` : pathname)
-  }
 
   if (!canView) {
     return (
@@ -159,7 +195,7 @@ export default function StockValuationPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            There was a problem loading stock valuation data. Try again.
+            {reportErrorMessage || "There was a problem loading stock valuation data. Try again."}
           </p>
           <Button onClick={() => void reportQuery.refetch()}>Retry</Button>
         </CardContent>
@@ -170,17 +206,23 @@ export default function StockValuationPage() {
   const summary = reportQuery.data?.summary
   const results = reportQuery.data?.results ?? []
 
+  const csvFilename = selectedPeriod
+    ? `stock-valuation-${selectedPeriod.start_date}-to-${selectedPeriod.end_date}.csv`
+    : `stock-valuation-${new Date().toISOString().slice(0, 10)}.csv`
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Stock Valuation</h1>
         <p className="text-sm text-muted-foreground">
-          View the current on-hand stock value per item and branch using latest and average costs.
+          {selectedPeriod
+            ? `Snapshot for ${formatPeriodLabel(selectedPeriod.start_date, selectedPeriod.end_date)}.`
+            : "View the current on-hand stock value per item and branch using latest and average costs."}
         </p>
       </div>
 
       {/* Filter bar */}
-      <div className="grid gap-4 rounded-xl border border-border bg-card p-4 md:grid-cols-[minmax(0,1fr)_220px]">
+      <div className="grid gap-4 rounded-xl border border-border bg-card p-4 md:grid-cols-[minmax(0,1fr)_220px_220px]">
         <div className="space-y-2">
           <Label htmlFor="sv-search">Search</Label>
           <Input
@@ -196,7 +238,7 @@ export default function StockValuationPage() {
           <select
             id="sv-branch"
             value={branch}
-            onChange={(e) => updateBranch(e.target.value)}
+            onChange={(e) => updateParam("branch", e.target.value)}
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none"
           >
             <option value="">All branches</option>
@@ -207,7 +249,36 @@ export default function StockValuationPage() {
             ))}
           </select>
         </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="sv-period">Period</Label>
+          <select
+            id="sv-period"
+            value={periodId}
+            onChange={(e) => updateParam("period_id", e.target.value)}
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none"
+          >
+            <option value="">Live (current stock)</option>
+            {closedPeriods.map((p) => (
+              <option key={p.id} value={p.id}>
+                {formatPeriodLabel(p.start_date, p.end_date)}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
+
+      {/* Snapshot info banner */}
+      {selectedPeriod ? (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          Showing authoritative snapshot for{" "}
+          <strong>
+            {formatPeriodLabel(selectedPeriod.start_date, selectedPeriod.end_date)}
+          </strong>
+          . Closed on {formatDateTime(selectedPeriod.closed_at)} by{" "}
+          {selectedPeriod.closed_by?.username ?? "—"}.
+        </div>
+      ) : null}
 
       {/* Summary cards */}
       {reportQuery.isLoading ? (
@@ -244,7 +315,7 @@ export default function StockValuationPage() {
                 </p>
               </div>
               {results.length > 0 && (
-                <Button onClick={() => exportCSV(results)}>Export CSV</Button>
+                <Button onClick={() => exportCSV(results, csvFilename)}>Export CSV</Button>
               )}
             </CardHeader>
             <CardContent className="p-0">

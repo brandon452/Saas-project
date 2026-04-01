@@ -69,7 +69,7 @@ export default function PurchaseOrdersPage() {
     updateFilter("page", String(nextPage))
   }
 
-  const supplierMap = new Map((suppliersQuery.data ?? []).map((item) => [item.id, item.name]))
+  const supplierMap = new Map((suppliersQuery.data ?? []).map((item) => [String(item.id), item.display_name]))
   const branchMap = new Map((branchesQuery.data ?? []).map((item) => [item.id, item.name]))
   const errorMessage = purchaseOrdersQuery.error instanceof Error ? purchaseOrdersQuery.error.message : ""
 

@@ -9,6 +9,7 @@ interface UseStockValuationParams {
   orgId: string
   branch?: string
   search?: string
+  periodId?: string
 }
 
 export function useStockValuation(params: UseStockValuationParams) {
@@ -18,11 +19,13 @@ export function useStockValuation(params: UseStockValuationParams) {
       params.orgId,
       params.branch ?? "",
       params.search ?? "",
+      params.periodId ?? "",
     ],
     queryFn: async () => {
       const sp = new URLSearchParams()
       if (params.branch) sp.set("branch", params.branch)
       if (params.search) sp.set("search", params.search)
+      if (params.periodId) sp.set("period_id", params.periodId)
       const qs = sp.toString()
       return apiRequest<StockValuationResponse>(
         `orgs/${params.orgId}/reports/stock-valuation/${qs ? `?${qs}` : ""}`,

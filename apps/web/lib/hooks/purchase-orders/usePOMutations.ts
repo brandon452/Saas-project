@@ -34,6 +34,16 @@ export function usePOMutations(orgId: string) {
     onSuccess: () => invalidateList(),
   })
 
+  const updatePO = useMutation({
+    mutationFn: ({ poId, data }: { poId: string; data: { supplier?: string; branch?: string; notes?: string } }) =>
+      apiRequest<PurchaseOrder>(`orgs/${orgId}/purchase-orders/${poId}/`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getCsrfHeader() },
+        body: JSON.stringify(data),
+      }),
+    onSuccess: (_, { poId }) => invalidateBoth(poId),
+  })
+
   const submitPO = useMutation({
     mutationFn: (poId: string) =>
       apiRequest<PurchaseOrder>(`orgs/${orgId}/purchase-orders/${poId}/submit/`, {
@@ -95,5 +105,5 @@ export function usePOMutations(orgId: string) {
     onSuccess: (_, { poId }) => invalidateBoth(poId),
   })
 
-  return { createPO, submitPO, cancelPO, addLine, updateLine, removeLine }
+  return { createPO, updatePO, submitPO, cancelPO, addLine, updateLine, removeLine }
 }

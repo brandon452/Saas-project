@@ -240,9 +240,11 @@ class MasterItemApiTests(APITestCase):
             item=self.acme_item,
             quantity=Decimal("5.0000"),
             movement_type="RECEIPT",
+            unit_cost=Decimal("5.0000"),
             performed_by=self.owner,
             idempotency_key="master-transfer-seed",
         )
+        transfer.lines.update(dispatched_unit_cost=Decimal("5.0000"))
 
         receive_transfer(
             transfer=transfer,
@@ -265,6 +267,7 @@ class MasterItemApiTests(APITestCase):
             created_by=self.owner,
         )
         transfer_two.lines.create(item=self.acme_item, quantity_sent=1)
+        transfer_two.lines.update(dispatched_unit_cost=Decimal("5.0000"))
         receive_transfer(
             transfer=transfer_two,
             lines_data=[{"line_id": transfer_two.lines.first().id, "quantity_received": 1}],

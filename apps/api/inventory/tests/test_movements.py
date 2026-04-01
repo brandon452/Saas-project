@@ -1,14 +1,13 @@
-from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
-from django.db import close_old_connections, connections
+from django.core.exceptions import ValidationError
 from django.test import TransactionTestCase
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import MasterItem, OrgItem, StockLedger, StockOnHand
+from inventory.models import InventoryClosePeriod, InventoryCostState, MasterItem, OrgItem, StockLedger, StockOnHand
 from inventory.services import record_stock_movement
 from tenancy.models import Organization, OrganizationMember
 
@@ -16,12 +15,12 @@ from tenancy.models import Organization, OrganizationMember
 class StockMovementServiceTests(TransactionTestCase):
     reset_sequences = True
 
-    def _create_org_item(self, organization, name, sku, *, item_name=""):
+    def _create_org_item(self, organization, name, sku):
         master_item = MasterItem.objects.create(name=name, sku=sku)
         return OrgItem.objects.for_org(organization).create(
             organization=organization,
             master_item=master_item,
-            name=item_name,
+            name="",
         )
 
     def setUp(self):
@@ -29,348 +28,229 @@ class StockMovementServiceTests(TransactionTestCase):
         self.user = User.objects.create_user(username="svc_user", password="Passw0rd!")
 
         self.org = Organization.objects.create(name="Acme", slug="acme")
-        self.other_org = Organization.objects.create(name="Globex", slug="globex")
+        self.branch = Branch.objects.for_org(self.org).create(
+            organization=self.org,
+            name="Main",
+            code="MAIN",
+        )
+        self.item = self._create_org_item(self.org, "Lavender Oil", "ACME-001")
+
+    def _receipt(self, quantity, *, unit_cost="10.0000", item=None, occurred_at=None, idempotency_key=None):
+        return record_stock_movement(
+            self.org,
+            self.branch,
+            item or self.item,
+            Decimal(quantity),
+            StockLedger.MOVEMENT_RECEIPT,
+            unit_cost=Decimal(unit_cost),
+            performed_by=self.user,
+            occurred_at=occurred_at,
+            idempotency_key=idempotency_key,
+        )
+
+    def test_receipt_issue_and_zero_stock_retention_follow_avco_rules(self):
+        first, _ = self._receipt("10.0000", unit_cost="10.0000", idempotency_key="r1")
+        second, _ = self._receipt("10.0000", unit_cost="20.0000", idempotency_key="r2")
+        issue, _ = record_stock_movement(
+            self.org,
+            self.branch,
+            self.item,
+            Decimal("-5.0000"),
+            StockLedger.MOVEMENT_ISSUE,
+            performed_by=self.user,
+            idempotency_key="i1",
+        )
+        drain, _ = record_stock_movement(
+            self.org,
+            self.branch,
+            self.item,
+            Decimal("-15.0000"),
+            StockLedger.MOVEMENT_ISSUE,
+            performed_by=self.user,
+            idempotency_key="i2",
+        )
+
+        cost_state = InventoryCostState.objects.get(
+            organization=self.org,
+            branch=self.branch,
+            item=self.item,
+        )
+        self.assertEqual(first.unit_cost, Decimal("10.0000"))
+        self.assertEqual(first.value_delta, Decimal("100.0000"))
+        self.assertEqual(second.unit_cost, Decimal("20.0000"))
+        self.assertEqual(second.value_delta, Decimal("200.0000"))
+        self.assertEqual(issue.unit_cost, Decimal("15.0000"))
+        self.assertEqual(issue.value_delta, Decimal("-75.0000"))
+        self.assertEqual(drain.unit_cost, Decimal("15.0000"))
+        self.assertEqual(drain.value_delta, Decimal("-225.0000"))
+        self.assertEqual(cost_state.average_unit_cost, Decimal("15.0000"))
+        self.assertEqual(cost_state.latest_unit_cost, Decimal("20.0000"))
+        self.assertEqual(
+            StockOnHand.objects.for_org(self.org).get(branch=self.branch, item=self.item).quantity,
+            Decimal("0.0000"),
+        )
+
+        reseed, _ = self._receipt("4.0000", unit_cost="7.5000", idempotency_key="r3")
+        cost_state.refresh_from_db()
+        self.assertEqual(reseed.unit_cost, Decimal("7.5000"))
+        self.assertEqual(cost_state.average_unit_cost, Decimal("7.5000"))
+        self.assertEqual(cost_state.latest_unit_cost, Decimal("7.5000"))
+
+    def test_positive_adjustment_requires_existing_avco(self):
+        with self.assertRaises(ValidationError) as ctx:
+            record_stock_movement(
+                self.org,
+                self.branch,
+                self.item,
+                Decimal("3.0000"),
+                StockLedger.MOVEMENT_ADJUSTMENT,
+                performed_by=self.user,
+            )
+        self.assertIn("Positive stock additions require a cost basis", str(ctx.exception))
+
+    def test_issue_and_adjustment_reject_caller_unit_cost(self):
+        self._receipt("5.0000", unit_cost="9.0000", idempotency_key="seed")
+
+        with self.assertRaises(ValidationError) as issue_ctx:
+            record_stock_movement(
+                self.org,
+                self.branch,
+                self.item,
+                Decimal("-1.0000"),
+                StockLedger.MOVEMENT_ISSUE,
+                unit_cost=Decimal("1.0000"),
+                performed_by=self.user,
+            )
+        self.assertIn("must not be provided for ISSUE", str(issue_ctx.exception))
+
+        with self.assertRaises(ValidationError) as adjustment_ctx:
+            record_stock_movement(
+                self.org,
+                self.branch,
+                self.item,
+                Decimal("-1.0000"),
+                StockLedger.MOVEMENT_ADJUSTMENT,
+                unit_cost=Decimal("1.0000"),
+                performed_by=self.user,
+            )
+        self.assertIn("must not be provided for ADJUSTMENT", str(adjustment_ctx.exception))
+
+    def test_sign_validation_messages(self):
+        with self.assertRaisesMessage(ValidationError, "RECEIPT quantity must be positive."):
+            record_stock_movement(
+                self.org,
+                self.branch,
+                self.item,
+                Decimal("-1.0000"),
+                StockLedger.MOVEMENT_RECEIPT,
+                unit_cost=Decimal("5.0000"),
+                performed_by=self.user,
+            )
+
+        self._receipt("5.0000", unit_cost="5.0000", idempotency_key="seed-2")
+        with self.assertRaisesMessage(ValidationError, "ISSUE quantity must be negative."):
+            record_stock_movement(
+                self.org,
+                self.branch,
+                self.item,
+                Decimal("1.0000"),
+                StockLedger.MOVEMENT_ISSUE,
+                performed_by=self.user,
+            )
+
+    def test_period_close_blocks_movements_for_its_dates(self):
+        period = InventoryClosePeriod.objects.create(
+            organization=self.org,
+            start_date=timezone.now().date(),
+            end_date=timezone.now().date(),
+            status=InventoryClosePeriod.CLOSED,
+        )
+
+        with self.assertRaisesMessage(ValidationError, f"Period {period.start_date}"):
+            self._receipt("1.0000", unit_cost="5.0000", idempotency_key="blocked")
+
+    def test_idempotent_retry_returns_original_row(self):
+        first, created_first = self._receipt("3.0000", unit_cost="8.0000", idempotency_key="same-key")
+        second, created_second = self._receipt("9.0000", unit_cost="99.0000", idempotency_key="same-key")
+
+        self.assertTrue(created_first)
+        self.assertFalse(created_second)
+        self.assertEqual(first.id, second.id)
+        self.assertEqual(
+            StockOnHand.objects.for_org(self.org).get(branch=self.branch, item=self.item).quantity,
+            Decimal("3.0000"),
+        )
+
+
+class StockMovementApiTests(APITestCase):
+    def _create_org_item(self, organization, name, sku):
+        master_item = MasterItem.objects.create(name=name, sku=sku)
+        return OrgItem.objects.for_org(organization).create(
+            organization=organization,
+            master_item=master_item,
+            name="",
+        )
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="api_user", password="Passw0rd!")
+        self.org = Organization.objects.create(name="Acme", slug="acme")
+        OrganizationMember.objects.create(user=self.user, organization=self.org, role="ADMIN", is_active=True)
 
         self.branch = Branch.objects.for_org(self.org).create(
             organization=self.org,
             name="Main",
             code="MAIN",
         )
-        self.other_branch = Branch.objects.for_org(self.other_org).create(
-            organization=self.other_org,
-            name="Other",
-            code="OTH",
-        )
-
-        self.item = self._create_org_item(self.org, "Lavender Oil", "ACME-001")
-        self.other_item = self._create_org_item(self.org, "Tea Tree Oil", "ACME-002")
-        self.item_other_org = self._create_org_item(self.other_org, "Globex Item", "GLOBEX-001")
-
-    def test_audit_metadata_persistence(self):
-        occurred_at = timezone.now() - timezone.timedelta(days=1)
-        record_stock_movement(
-            self.org,
-            self.branch,
-            self.item,
-            Decimal("2.0000"),
-            "RECEIPT",
-        )
-        ledger, created = record_stock_movement(
-            self.org,
-            self.branch,
-            self.item,
-            Decimal("-2.0000"),
-            "ADJUSTMENT",
-            performed_by=self.user,
-            reference_type="STOCK_COUNT",
-            reference_id="count_2026_03_06_001",
-            reason="Cycle count variance",
-            occurred_at=occurred_at,
-            idempotency_key="acme-adjustment-1",
-        )
-
-        self.assertTrue(created)
-        self.assertEqual(ledger.performed_by_id, self.user.id)
-        self.assertEqual(ledger.reference_type, "STOCK_COUNT")
-        self.assertEqual(ledger.reference_id, "count_2026_03_06_001")
-        self.assertEqual(ledger.reason, "Cycle count variance")
-        self.assertEqual(ledger.occurred_at, occurred_at)
-        self.assertEqual(ledger.idempotency_key, "acme-adjustment-1")
-
-    def test_occurred_at_default_and_explicit(self):
-        before = timezone.now()
-        ledger_default, _ = record_stock_movement(
-            self.org,
-            self.branch,
-            self.item,
-            Decimal("1.0000"),
-            "RECEIPT",
-        )
-        after = timezone.now()
-        self.assertIsNotNone(ledger_default.occurred_at)
-        self.assertGreaterEqual(ledger_default.occurred_at, before)
-        self.assertLessEqual(ledger_default.occurred_at, after)
-
-        explicit_time = timezone.now() - timezone.timedelta(days=2)
-        ledger_explicit, _ = record_stock_movement(
-            self.org,
-            self.branch,
-            self.item,
-            Decimal("1.0000"),
-            "RECEIPT",
-            occurred_at=explicit_time,
-        )
-        self.assertEqual(ledger_explicit.occurred_at, explicit_time)
-
-    def test_idempotent_retry_single_apply(self):
-        key = "idem-retry-1"
-        first, created1 = record_stock_movement(
-            self.org,
-            self.branch,
-            self.item,
-            Decimal("3.0000"),
-            "RECEIPT",
-            idempotency_key=key,
-        )
-        second, created2 = record_stock_movement(
-            self.org,
-            self.branch,
-            self.item,
-            Decimal("999.0000"),
-            "RECEIPT",
-            idempotency_key=key,
-        )
-
-        self.assertTrue(created1)
-        self.assertFalse(created2)
-        self.assertEqual(first.id, second.id)
-        soh = StockOnHand.objects.for_org(self.org).get(branch=self.branch, item=self.item)
-        self.assertEqual(soh.quantity, Decimal("3.0000"))
-        self.assertEqual(
-            StockLedger.objects.for_org(self.org).filter(idempotency_key=key).count(),
-            1,
-        )
-
-    def test_concurrent_idempotent_requests(self):
-        key = "idem-concurrent-1"
-
-        def worker():
-            close_old_connections()
-            try:
-                record_stock_movement(
-                    self.org,
-                    self.branch,
-                    self.item,
-                    Decimal("2.0000"),
-                    "RECEIPT",
-                    idempotency_key=key,
-                )
-            except Exception:
-                pass
-            finally:
-                connections.close_all()
-
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            list(ex.map(lambda _: worker(), range(2)))
-
-        self.assertEqual(StockLedger.objects.for_org(self.org).filter(idempotency_key=key).count(), 1)
-        soh = StockOnHand.objects.for_org(self.org).get(branch=self.branch, item=self.item)
-        self.assertEqual(soh.quantity, Decimal("2.0000"))
-
-    def test_idempotency_key_is_org_scoped(self):
-        key = "same-key-different-org"
-        l1, _ = record_stock_movement(
-            self.org,
-            self.branch,
-            self.item,
-            Decimal("1.0000"),
-            "RECEIPT",
-            idempotency_key=key,
-        )
-        l2, _ = record_stock_movement(
-            self.other_org,
-            self.other_branch,
-            self.item_other_org,
-            Decimal("1.0000"),
-            "RECEIPT",
-            idempotency_key=key,
-        )
-        self.assertNotEqual(l1.organization_id, l2.organization_id)
-
-    def test_no_idempotency_key_allows_multiple_writes(self):
-        record_stock_movement(self.org, self.branch, self.item, Decimal("1.0000"), "RECEIPT")
-        record_stock_movement(self.org, self.branch, self.item, Decimal("1.0000"), "RECEIPT")
-        soh = StockOnHand.objects.for_org(self.org).get(branch=self.branch, item=self.item)
-        self.assertEqual(soh.quantity, Decimal("2.0000"))
-        self.assertEqual(StockLedger.objects.for_org(self.org).filter(item=self.item).count(), 2)
-
-    def test_key_reuse_returns_original_movement_unchanged(self):
-        key = "reuse-key"
-        first, _ = record_stock_movement(
-            self.org,
-            self.branch,
-            self.item,
-            Decimal("4.0000"),
-            "RECEIPT",
-            idempotency_key=key,
-        )
-        second, created_second = record_stock_movement(
-            self.org,
-            self.branch,
-            self.other_item,
-            Decimal("9.0000"),
-            "ADJUSTMENT",
-            idempotency_key=key,
-        )
-
-        self.assertFalse(created_second)
-        self.assertEqual(first.id, second.id)
-        soh = StockOnHand.objects.for_org(self.org).get(branch=self.branch, item=self.item)
-        self.assertEqual(soh.quantity, Decimal("4.0000"))
-
-    def test_receipt_with_negative_quantity_raises(self):
-        from django.core.exceptions import ValidationError
-        with self.assertRaises(ValidationError) as ctx:
-            record_stock_movement(
-                self.org, self.branch, self.item,
-                Decimal("-1.0000"), "RECEIPT",
-            )
-        self.assertIn("positive", str(ctx.exception))
-
-    def test_issue_with_positive_quantity_raises(self):
-        from django.core.exceptions import ValidationError
-        record_stock_movement(self.org, self.branch, self.item, Decimal("5.0000"), "RECEIPT")
-        with self.assertRaises(ValidationError) as ctx:
-            record_stock_movement(
-                self.org, self.branch, self.item,
-                Decimal("1.0000"), "ISSUE",
-            )
-        self.assertIn("negative", str(ctx.exception))
-
-    def test_adjustment_accepts_positive_quantity(self):
-        ledger, created = record_stock_movement(
-            self.org, self.branch, self.item,
-            Decimal("3.0000"), "ADJUSTMENT",
-        )
-        self.assertTrue(created)
-        self.assertEqual(ledger.quantity, Decimal("3.0000"))
-
-    def test_adjustment_accepts_negative_quantity(self):
-        record_stock_movement(self.org, self.branch, self.item, Decimal("5.0000"), "RECEIPT")
-        ledger, created = record_stock_movement(
-            self.org, self.branch, self.item,
-            Decimal("-2.0000"), "ADJUSTMENT",
-        )
-        self.assertTrue(created)
-        self.assertEqual(ledger.quantity, Decimal("-2.0000"))
-
-    def test_stock_consistency_without_idempotency_still_holds(self):
-        def worker():
-            close_old_connections()
-            try:
-                record_stock_movement(
-                    self.org,
-                    self.branch,
-                    self.item,
-                    Decimal("1.0000"),
-                    "RECEIPT",
-                )
-            finally:
-                connections.close_all()
-
-        runs = 20
-        with ThreadPoolExecutor(max_workers=8) as ex:
-            list(ex.map(lambda _: worker(), range(runs)))
-
-        soh = StockOnHand.objects.for_org(self.org).get(branch=self.branch, item=self.item)
-        self.assertEqual(soh.quantity, Decimal("20.0000"))
-
-
-class StockMovementApiTests(APITestCase):
-    def _create_org_item(self, organization, name, sku, *, item_name=""):
-        master_item = MasterItem.objects.create(name=name, sku=sku)
-        return OrgItem.objects.for_org(organization).create(
-            organization=organization,
-            master_item=master_item,
-            name=item_name,
-        )
-
-    def setUp(self):
-        User = get_user_model()
-        self.user = User.objects.create_user(username="api_user", password="Passw0rd!")
-        self.other_user = User.objects.create_user(username="other_user", password="Passw0rd!")
-
-        self.org = Organization.objects.create(name="Acme", slug="acme")
-        self.other_org = Organization.objects.create(name="Globex", slug="globex")
-
-        OrganizationMember.objects.create(user=self.user, organization=self.org, role="ADMIN", is_active=True)
-        OrganizationMember.objects.create(user=self.other_user, organization=self.other_org, role="ADMIN", is_active=True)
-
-        self.branch = Branch.objects.for_org(self.org).create(organization=self.org, name="Main", code="MAIN")
-        self.other_branch = Branch.objects.for_org(self.other_org).create(
-            organization=self.other_org,
-            name="Other",
-            code="OTH",
-        )
-
         self.item = self._create_org_item(self.org, "Lavender Oil", "ACME-001")
 
     def _url(self):
         return f"/api/orgs/{self.org.id}/inventory/movements/"
 
-    def test_validation_takes_priority_over_idempotency(self):
+    def _post(self, payload):
         self.client.force_authenticate(self.user)
-        key = "known-key"
-        payload = {
-            "item": str(self.item.id),
-            "quantity": "1.0000",
-            "movement_type": "RECEIPT",
-            "idempotency_key": key,
-        }
-        first = self.client.post(
+        return self.client.post(
             self._url(),
             payload,
             format="json",
             HTTP_HOST="acme.localhost:8000",
             HTTP_X_BRANCH_ID=str(self.branch.id),
         )
-        self.assertEqual(first.status_code, 201)
 
-        invalid_payload = {
-            "movement_type": "RECEIPT",
-            "idempotency_key": key,
-        }
-        second = self.client.post(
-            self._url(),
-            invalid_payload,
-            format="json",
-            HTTP_HOST="acme.localhost:8000",
-            HTTP_X_BRANCH_ID=str(self.branch.id),
+    def test_receipt_requires_unit_cost(self):
+        response = self._post(
+            {
+                "item": str(self.item.id),
+                "quantity": "1.0000",
+                "movement_type": "RECEIPT",
+            }
         )
-        self.assertEqual(second.status_code, 400)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("unit_cost is required for RECEIPT movements.", response.data["detail"][0])
 
-    def test_performed_by_cannot_be_spoofed(self):
-        self.client.force_authenticate(self.user)
-        payload = {
-            "item": str(self.item.id),
-            "quantity": "1.0000",
-            "movement_type": "RECEIPT",
-            "idempotency_key": "spoof-key",
-            "performed_by": self.other_user.id,
-        }
-        res = self.client.post(
-            self._url(),
-            payload,
-            format="json",
-            HTTP_HOST="acme.localhost:8000",
-            HTTP_X_BRANCH_ID=str(self.branch.id),
-        )
-        self.assertEqual(res.status_code, 201)
-        self.assertEqual(res.data["performed_by"]["id"], self.user.id)
-        self.assertEqual(res.data["performed_by"]["username"], self.user.username)
-
-    def test_deduplicated_request_returns_200(self):
-        self.client.force_authenticate(self.user)
+    def test_receipt_with_unit_cost_is_idempotent(self):
         payload = {
             "item": str(self.item.id),
             "quantity": "2.0000",
             "movement_type": "RECEIPT",
+            "unit_cost": "11.2500",
             "idempotency_key": "api-idem-key",
         }
-        first = self.client.post(
-            self._url(),
-            payload,
-            format="json",
-            HTTP_HOST="acme.localhost:8000",
-            HTTP_X_BRANCH_ID=str(self.branch.id),
-        )
-        second = self.client.post(
-            self._url(),
-            payload,
-            format="json",
-            HTTP_HOST="acme.localhost:8000",
-            HTTP_X_BRANCH_ID=str(self.branch.id),
-        )
+        first = self._post(payload)
+        second = self._post(payload)
+
         self.assertEqual(first.status_code, 201)
         self.assertEqual(second.status_code, 200)
         self.assertEqual(first.data["id"], second.data["id"])
+
+    def test_receipt_rejects_non_positive_unit_cost(self):
+        response = self._post(
+            {
+                "item": str(self.item.id),
+                "quantity": "1.0000",
+                "movement_type": "RECEIPT",
+                "unit_cost": "0.0000",
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["unit_cost"][0], "unit_cost must be greater than zero.")

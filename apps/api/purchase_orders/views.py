@@ -1,12 +1,16 @@
+import logging
+
 from django.db import transaction
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import MethodNotAllowed
+from rest_framework.exceptions import MethodNotAllowed, ValidationError as DRFValidationError
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from tenancy.mixins import OrgScopedViewSetMixin
 from tenancy.permissions import IsOrgOperationalUser, RolePolicyMixin, get_org_membership
+
+logger = logging.getLogger(__name__)
 
 from .models import PurchaseOrder
 from .serializers import (
@@ -74,6 +78,15 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
     @transaction.atomic
     def perform_create(self, serializer):
         get_org_membership(self.request)
+        branch = serializer.validated_data.get("branch")
+        if branch is not None and branch.organization_id != self.request.org.id:
+            logger.warning(
+                "PO creation blocked: branch %s does not belong to org %s (user %s)",
+                branch.pk,
+                self.request.org.pk,
+                self.request.user,
+            )
+            raise DRFValidationError({"detail": "Branch does not belong to this organisation."})
         po_number = generate_po_number(self.request.org)
         serializer.save(
             organization=self.request.org,

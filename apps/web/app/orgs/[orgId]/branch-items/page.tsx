@@ -429,8 +429,7 @@ export default function BranchItemsPage() {
                               <TableCell>
                                 {row.is_enabled ? (
                                   <Button
-                                    variant="ghost"
-                                    className="text-red-600 hover:text-red-700"
+                                    variant="destructive"
                                     disabled={isPending}
                                     onClick={() => setConfirmRow(row)}
                                   >

@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend Lint And Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: inventory_main
+          POSTGRES_USER: inventory_user
+          POSTGRES_PASSWORD: admin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U inventory_user -d inventory_main"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_NAME: inventory_main
+      DB_USER: inventory_user
+      DB_PASSWORD: admin
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DEBUG: "true"
+      SECRET_KEY: ci-secret-key-change-me-to-a-long-random-value
+      REDIS_URL: redis://127.0.0.1:6379/1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set Up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: apps/api/requirements.txt
+
+      - name: Install Backend Dependencies
+        run: python -m pip install -r apps/api/requirements.txt
+
+      - name: Run Backend Lint
+        run: python -m ruff check apps/api
+
+      - name: Run Backend Tests
+        run: python apps/api/manage.py test -v 2
+
+  frontend:
+    name: Frontend Lint And Build
+    runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set Up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Run Frontend Lint
+        run: npm run lint --workspace=apps/web
+
+      - name: Run Frontend Build
+        run: npm run build --workspace=apps/web
