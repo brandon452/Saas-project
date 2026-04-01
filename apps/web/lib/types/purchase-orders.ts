@@ -41,11 +41,7 @@ export interface PurchaseOrder {
   updated_at: string
 }
 
-export interface Supplier {
-  id: string
-  name: string
-  is_active: boolean
-}
+export type { Supplier } from "./suppliers"
 
 export interface Branch {
   id: string

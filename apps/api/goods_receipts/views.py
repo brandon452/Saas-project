@@ -3,6 +3,7 @@ from datetime import date, datetime, time
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
+from django_ratelimit.core import is_ratelimited
 from rest_framework import status
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
@@ -84,6 +85,11 @@ class GoodsReceiptViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
         return GoodsReceiptSerializer
 
     def create(self, request, *args, **kwargs):
+        if is_ratelimited(request, group="goods_receipt_create", key="user", rate="60/m", method="POST", increment=True):
+            return Response(
+                {"detail": "Too many requests. Please wait before posting another receipt."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)

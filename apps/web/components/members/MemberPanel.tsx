@@ -15,6 +15,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { ApiError } from "@/lib/api"
 import { useMemberMutations } from "@/lib/hooks/members/useMemberMutations"
 import { usePOBranches } from "@/lib/hooks/purchase-orders/usePOBranches"
 import type { Member, MemberRole, UpdateMemberPayload } from "@/lib/types/members"
@@ -29,22 +30,20 @@ interface MemberPanelProps {
 
 function getFullName(member: Member | null) {
   if (!member) return ""
-
-  const fullName = `${member.user.first_name} ${member.user.last_name}`.trim()
-  return fullName || member.user.email
+  return `${member.user.first_name} ${member.user.last_name}`.trim() || "—"
 }
 
 function getPanelErrorMessage(error: unknown, action: "save" | "reactivate" | "deactivate") {
-  const message = error instanceof Error ? error.message : ""
+  const status = error instanceof ApiError ? error.status : null
 
-  if (message.includes("403")) {
+  if (status === 403) {
     if (action === "deactivate") {
       return "You do not have permission to deactivate this member."
     }
     return "You do not have permission to manage this member."
   }
 
-  if (message.includes("400")) {
+  if (status === 400) {
     if (action === "reactivate") {
       return "Could not reactivate this member. Check the current role and branch assignment."
     }
@@ -252,7 +251,7 @@ export function MemberPanel({
                     <Button onClick={handleSave} disabled={!canSave}>
                       {updateMember.isPending ? "Saving..." : "Save"}
                     </Button>
-                    <Button variant="ghost" onClick={resetDrafts} disabled={isPending}>
+                    <Button variant="outline" onClick={onClose} disabled={isPending}>
                       Cancel
                     </Button>
                   </div>
@@ -267,8 +266,7 @@ export function MemberPanel({
                 <div className="flex flex-wrap gap-3">
                   {member.is_active && member.user.id !== currentUserId ? (
                     <Button
-                      variant="ghost"
-                      className="text-red-600 hover:text-red-700"
+                      variant="destructive"
                       onClick={() => setConfirmOpen(true)}
                       disabled={isPending}
                     >

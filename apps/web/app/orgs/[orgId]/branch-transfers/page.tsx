@@ -148,7 +148,7 @@ export default function BranchTransfersPage() {
           </select>
         </div>
         <div className="flex items-end">
-          <Button variant="ghost" className="w-full justify-center" onClick={clearFilters}>
+          <Button variant="outline" className="w-full justify-center" onClick={clearFilters}>
             Clear filters
           </Button>
         </div>

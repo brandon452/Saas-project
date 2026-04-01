@@ -1,10 +1,12 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import BooleanField, Case, Count, F, IntegerField, OuterRef, Q, Subquery, Value, When
+from django_ratelimit.core import is_ratelimited
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework.decorators import action
 from rest_framework import status, viewsets
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError as DRFValidationError
+from rest_framework.generics import get_object_or_404
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
@@ -17,15 +19,23 @@ from tenancy.models import Organization
 from tenancy.permissions import (
     IsOrgOperationalUser,
     IsOrgOwnerOrAdmin,
+    IsOrgOwnerOrAdminOrParentAdmin,
+    IsOrgOwnerOrParentAdmin,
     IsParentAdmin,
     IsParentMember,
     RolePolicyMixin,
     get_parent_membership,
 )
 
-from .models import BranchItem, MasterItem, OrgItem, StockLedger, StockOnHand, StockTake, StockTakeLine
+from .models import (
+    BranchItem, InventoryClosePeriod, InventoryCloseSnapshot,
+    MasterItem, OrgItem, StockLedger, StockOnHand, StockTake, StockTakeLine,
+)
 from .serializers import (
     BranchItemBulkActivateSerializer,
+    InventoryCloseSnapshotSerializer,
+    InventoryClosePeriodSerializer,
+    InventoryClosePeriodCreateSerializer,
     BranchItemBulkDeactivateSerializer,
     BranchItemCatalogSerializer,
     BranchItemCreateSerializer,
@@ -48,7 +58,9 @@ from .serializers import (
 from .services import (
     approve_stock_take,
     cancel_stock_take,
+    close_period,
     record_stock_movement,
+    reopen_period,
     reopen_stock_take,
     start_stock_take,
     submit_stock_take,
@@ -498,6 +510,11 @@ class StockMovementViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedM
         return Response(serializer.data)
 
     def create(self, request, *args, **kwargs):
+        if is_ratelimited(request, group="stock_movement_create", key="user", rate="60/m", method="POST", increment=True):
+            return Response(
+                {"detail": "Too many requests. Please wait before posting another movement."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -511,6 +528,7 @@ class StockMovementViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedM
                 item=item,
                 quantity=serializer.validated_data["quantity"],
                 movement_type=serializer.validated_data["movement_type"],
+                unit_cost=serializer.validated_data["unit_cost"],
                 performed_by=request.user,
                 reference_type=serializer.validated_data["reference_type"],
                 reference_id=serializer.validated_data["reference_id"],
@@ -681,3 +699,60 @@ class StockTakeViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelVie
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(StockTakeLineSerializer(line, context={"request": request}).data)
+
+
+class ClosePeriodViewSet(OrgScopedViewSetMixin, viewsets.GenericViewSet):
+    queryset = InventoryClosePeriod.objects.none()
+
+    def get_permissions(self):
+        base = OrgScopedViewSetMixin.permission_classes
+        if self.action in ("create", "close", "reopen"):
+            return [p() for p in base + [IsOrgOwnerOrParentAdmin]]
+        return [p() for p in base + [IsOrgOwnerOrAdminOrParentAdmin]]
+
+    def get_queryset(self):
+        return InventoryClosePeriod.objects.filter(
+            organization=self.request.org
+        ).order_by("-start_date")
+
+    def list(self, request, *args, **kwargs):
+        serializer = InventoryClosePeriodSerializer(self.get_queryset(), many=True)
+        return Response(serializer.data)
+
+    def retrieve(self, request, *args, **kwargs):
+        period = self.get_object()
+        return Response(InventoryClosePeriodSerializer(period).data)
+
+    def create(self, request, *args, **kwargs):
+        serializer = InventoryClosePeriodCreateSerializer(
+            data=request.data, context={"request": request}
+        )
+        serializer.is_valid(raise_exception=True)
+        period = serializer.save(organization=request.org, status=InventoryClosePeriod.OPEN)
+        return Response(InventoryClosePeriodSerializer(period).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="close")
+    def close(self, request, *args, **kwargs):
+        period = self.get_object()
+        try:
+            close_period(period, closed_by=request.user)
+        except DjangoValidationError as exc:
+            raise DRFValidationError({"detail": exc.messages})
+        period.refresh_from_db()
+        return Response(InventoryClosePeriodSerializer(period).data)
+
+    @action(detail=True, methods=["post"], url_path="reopen")
+    def reopen(self, request, *args, **kwargs):
+        period = self.get_object()
+        try:
+            reopen_period(period, reopened_by=request.user)
+        except DjangoValidationError as exc:
+            raise DRFValidationError({"detail": exc.messages})
+        period.refresh_from_db()
+        return Response(InventoryClosePeriodSerializer(period).data)
+
+    @action(detail=True, methods=["get"], url_path="snapshots")
+    def snapshots(self, request, *args, **kwargs):
+        period = self.get_object()
+        qs = period.snapshots.select_related("branch", "item__master_item").all()
+        return Response(InventoryCloseSnapshotSerializer(qs, many=True).data)

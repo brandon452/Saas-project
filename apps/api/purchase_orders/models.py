@@ -89,7 +89,11 @@ class PurchaseOrderLine(models.Model):
             models.UniqueConstraint(
                 fields=["purchase_order", "item"],
                 name="unique_item_per_po",
-            )
+            ),
+            models.CheckConstraint(
+                check=models.Q(received_quantity__lte=models.F("ordered_quantity")),
+                name="po_line_received_lte_ordered",
+            ),
         ]
 
     def __str__(self):

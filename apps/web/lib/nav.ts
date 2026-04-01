@@ -9,10 +9,12 @@ import {
   History,
   LayoutDashboard,
   Layers,
+  LockKeyhole,
   Package,
   Settings,
   SlidersHorizontal,
   ShoppingCart,
+  Receipt,
   Tag,
   TrendingUp,
   Truck,
@@ -84,6 +86,12 @@ export function getNavGroups(orgId: string): NavGroup[] {
           allowedRoles: "all",
         },
         {
+          label: "Quick Sales",
+          href: `/orgs/${orgId}/quick-sales`,
+          icon: Receipt,
+          allowedRoles: "all",
+        },
+        {
           label: "Branch Transfers",
           href: `/orgs/${orgId}/branch-transfers`,
           icon: ArrowLeftRight,
@@ -122,6 +130,12 @@ export function getNavGroups(orgId: string): NavGroup[] {
           label: "Branches",
           href: `/orgs/${orgId}/branches`,
           icon: Building2,
+          allowedRoles: ["OWNER", "ADMIN"],
+        },
+        {
+          label: "Close Periods",
+          href: `/orgs/${orgId}/close-periods`,
+          icon: LockKeyhole,
           allowedRoles: ["OWNER", "ADMIN"],
         },
         {

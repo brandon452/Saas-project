@@ -186,7 +186,12 @@ export default function SuppliersPage() {
                       setPanelOpen(true)
                     }}
                   >
-                    <TableCell className="font-medium">{supplier.name}</TableCell>
+                    <TableCell className="font-medium">
+                      {supplier.display_name}
+                      {supplier.code ? (
+                        <span className="ml-2 text-xs text-muted-foreground">{supplier.code}</span>
+                      ) : null}
+                    </TableCell>
                     <TableCell>
                       <SupplierStatusBadge isActive={supplier.is_active} />
                     </TableCell>

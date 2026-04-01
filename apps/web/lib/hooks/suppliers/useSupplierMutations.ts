@@ -14,7 +14,7 @@ export function useSupplierMutations(orgId: string) {
   }
 
   const createSupplier = useMutation({
-    mutationFn: (data: { name: string }) =>
+    mutationFn: (data: { display_name: string }) =>
       apiRequest<Supplier>(`orgs/${orgId}/suppliers/`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getCsrfHeader() },
@@ -24,11 +24,30 @@ export function useSupplierMutations(orgId: string) {
   })
 
   const updateSupplier = useMutation({
-    mutationFn: ({ id, name }: { id: number; name: string }) =>
+    mutationFn: ({ id, data }: {
+      id: number
+      data: {
+        display_name: string
+        legal_name?: string
+        email?: string
+        phone?: string
+        payment_terms_days?: number | null
+        default_lead_time_days?: number | null
+        currency?: string
+        tax_id?: string
+        address_line1?: string
+        address_line2?: string
+        city?: string
+        state?: string
+        postal_code?: string
+        country?: string
+        notes?: string
+      }
+    }) =>
       apiRequest<Supplier>(`orgs/${orgId}/suppliers/${id}/`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...getCsrfHeader() },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify(data),
       }),
     onSuccess: invalidate,
   })
@@ -43,5 +62,15 @@ export function useSupplierMutations(orgId: string) {
     onSuccess: invalidate,
   })
 
-  return { createSupplier, updateSupplier, deactivateSupplier }
+  const reactivateSupplier = useMutation({
+    mutationFn: (id: number) =>
+      apiRequest<Supplier>(`orgs/${orgId}/suppliers/${id}/reactivate/`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getCsrfHeader() },
+        body: JSON.stringify({ is_active: true }),
+      }),
+    onSuccess: invalidate,
+  })
+
+  return { createSupplier, updateSupplier, deactivateSupplier, reactivateSupplier }
 }

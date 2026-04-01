@@ -6,11 +6,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { GRBranch } from "@/lib/hooks/goods-receipts/useGRBranches"
-import type { GRSupplier } from "@/lib/hooks/goods-receipts/useGRSuppliers"
+import type { Supplier } from "@/lib/types/suppliers"
 
 interface GoodsReceiptFiltersProps {
   branches: GRBranch[]
-  suppliers: GRSupplier[]
+  suppliers: Supplier[]
 }
 
 export function GoodsReceiptFilters({ branches, suppliers }: GoodsReceiptFiltersProps) {
@@ -91,8 +91,8 @@ export function GoodsReceiptFilters({ branches, suppliers }: GoodsReceiptFilters
         >
           <option value="">All suppliers</option>
           {suppliers.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.name}
+            <option key={option.id} value={String(option.id)}>
+              {option.display_name}
             </option>
           ))}
         </select>
@@ -119,7 +119,7 @@ export function GoodsReceiptFilters({ branches, suppliers }: GoodsReceiptFilters
       </div>
 
       <div className="flex items-end">
-        <Button variant="ghost" className="w-full justify-center" onClick={clearFilters}>
+        <Button variant="outline" className="w-full justify-center" onClick={clearFilters}>
           Clear filters
         </Button>
       </div>

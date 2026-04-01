@@ -37,6 +37,9 @@ class NegativeStockTestDataMixin:
         self.item = self._create_org_item(self.org, "Lavender Oil", "NEG-001")
 
     def _record(self, quantity, movement_type="ADJUSTMENT"):
+        kwargs = {}
+        if movement_type == "RECEIPT":
+            kwargs["unit_cost"] = Decimal("10.0000")
         return record_stock_movement(
             org=self.org,
             branch=self.branch,
@@ -44,6 +47,7 @@ class NegativeStockTestDataMixin:
             quantity=Decimal(quantity),
             movement_type=movement_type,
             performed_by=self.user,
+            **kwargs,
         )
 
 
@@ -200,6 +204,7 @@ class NegativeStockApiTests(NegativeStockTestDataMixin, APITestCase):
             item=self.item,
             quantity=Decimal("5.0000"),
             movement_type="RECEIPT",
+            unit_cost=Decimal("10.0000"),
             performed_by=self.user,
         )
 

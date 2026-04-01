@@ -61,6 +61,14 @@ ROLE_POLICY = {
         "update": {"OWNER", "ADMIN"},
         "partial_update": {"OWNER", "ADMIN"},
         "deactivate": {"OWNER", "ADMIN"},
+        "reactivate": {"OWNER", "ADMIN"},
+        "list_contacts": {"OWNER", "ADMIN", "STAFF"},
+        "add_contact": {"OWNER", "ADMIN"},
+        "update_contact": {"OWNER", "ADMIN"},
+        "deactivate_contact": {"OWNER", "ADMIN"},
+        "reactivate_contact": {"OWNER", "ADMIN"},
+        "delete_contact": {"OWNER", "ADMIN"},
+        "set_primary_contact": {"OWNER", "ADMIN"},
     },
     "purchase_orders": {
         "list": {"OWNER", "ADMIN", "STAFF"},
@@ -92,6 +100,12 @@ ROLE_POLICY = {
         "update": set(),
         "partial_update": set(),
         "destroy": set(),
+    },
+    "quick_sales": {
+        "list": {"OWNER", "ADMIN", "STAFF"},
+        "retrieve": {"OWNER", "ADMIN", "STAFF"},
+        "create": {"OWNER", "ADMIN", "STAFF"},
+        "void": {"OWNER", "ADMIN"},
     },
 }
 
@@ -254,6 +268,38 @@ class IsOrgOwnerOrAdmin(BasePermission):
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
+        role = get_member_role(request)
+        return role in {"OWNER", "ADMIN"}
+
+
+class IsOrgOwnerOrParentAdmin(BasePermission):
+    """
+    Allows org OWNER or PARENT_ADMIN.
+    Used for operations (like period close/reopen) that must be
+    restricted from ADMIN but accessible to platform admins.
+    """
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        parent = get_parent_membership(request)
+        if parent:
+            return parent.role == ParentCompanyMember.PARENT_ADMIN
+        role = get_member_role(request)
+        return role == "OWNER"
+
+
+class IsOrgOwnerOrAdminOrParentAdmin(BasePermission):
+    """
+    Allows OWNER, ADMIN, and PARENT_ADMIN.
+    Used for read-only close period operations (list, retrieve, snapshots)
+    where ADMINs should have visibility but not the ability to mutate.
+    """
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        parent = get_parent_membership(request)
+        if parent:
+            return parent.role == ParentCompanyMember.PARENT_ADMIN
         role = get_member_role(request)
         return role in {"OWNER", "ADMIN"}
 

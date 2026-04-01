@@ -62,7 +62,7 @@ export default function NewGoodsReceiptPage() {
 
   const poSearchQuery = useGRPOSearch(orgId, debouncedPOQuery)
   const branchMap = new Map((branchesQuery.data ?? []).map((item) => [item.id, item.name]))
-  const supplierMap = new Map((suppliersQuery.data ?? []).map((item) => [item.id, item.name]))
+  const supplierMap = new Map((suppliersQuery.data ?? []).map((item) => [String(item.id), item.display_name]))
 
   const poSearchResults = useMemo(
     () => poSearchQuery.data?.results ?? [],
@@ -338,8 +338,8 @@ export default function NewGoodsReceiptPage() {
                 >
                   <option value="">None</option>
                   {(suppliersQuery.data ?? []).map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.name}
+                    <option key={option.id} value={String(option.id)}>
+                      {option.display_name}
                     </option>
                   ))}
                 </select>

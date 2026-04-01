@@ -5,6 +5,8 @@ from branches.models import Branch
 
 from .models import (
     BranchItem,
+    InventoryClosePeriod,
+    InventoryCloseSnapshot,
     MasterItem,
     OrgItem,
     StockLedger,
@@ -323,6 +325,13 @@ class StockMovementSerializer(serializers.Serializer):
     item = serializers.PrimaryKeyRelatedField(queryset=OrgItem.objects.none())
     quantity = serializers.DecimalField(max_digits=12, decimal_places=4)
     movement_type = serializers.ChoiceField(choices=["RECEIPT", "ISSUE", "ADJUSTMENT"])
+    unit_cost = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        required=False,
+        allow_null=True,
+        default=None,
+    )
     reference_type = serializers.CharField(required=False, allow_null=True, allow_blank=True, default=None)
     reference_id = serializers.CharField(required=False, allow_null=True, allow_blank=True, default=None)
     reason = serializers.CharField(required=False, allow_null=True, allow_blank=True, default=None)
@@ -353,6 +362,10 @@ class StockMovementSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     {"branch": "You can only post movements to your assigned branch."}
                 )
+
+        unit_cost = data.get("unit_cost")
+        if unit_cost is not None and unit_cost <= 0:
+            raise serializers.ValidationError({"unit_cost": "unit_cost must be greater than zero."})
 
         return data
 
@@ -576,6 +589,53 @@ class StockTakeLineBulkUpdateSerializer(serializers.Serializer):
                 "Ensure this field has no more than 1000 elements."
             )
         return value
+
+
+class InventoryCloseSnapshotSerializer(serializers.ModelSerializer):
+    branch = BranchSummarySerializer(read_only=True)
+    item   = ItemSummarySerializer(read_only=True)
+
+    class Meta:
+        model = InventoryCloseSnapshot
+        fields = [
+            "id", "branch", "item", "quantity_on_hand",
+            "average_unit_cost", "latest_unit_cost",
+            "average_valuation", "latest_valuation", "valuation_basis",
+        ]
+
+
+class InventoryClosePeriodSerializer(serializers.ModelSerializer):
+    closed_by   = PerformedBySerializer(read_only=True)
+    reopened_by = PerformedBySerializer(read_only=True)
+
+    class Meta:
+        model = InventoryClosePeriod
+        fields = [
+            "id", "start_date", "end_date", "status", "notes",
+            "closed_at", "closed_by", "reopened_at", "reopened_by",
+        ]
+        read_only_fields = ["id", "status", "closed_at", "closed_by", "reopened_at", "reopened_by"]
+
+
+class InventoryClosePeriodCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InventoryClosePeriod
+        fields = ["start_date", "end_date", "notes"]
+
+    def validate(self, data):
+        if data["start_date"] > data["end_date"]:
+            raise serializers.ValidationError("start_date must be on or before end_date.")
+        org = self.context["request"].org
+        overlap = InventoryClosePeriod.objects.filter(
+            organization=org,
+            start_date__lte=data["end_date"],
+            end_date__gte=data["start_date"],
+        ).first()
+        if overlap:
+            raise serializers.ValidationError(
+                f"Period overlaps existing period {overlap.start_date}–{overlap.end_date}."
+            )
+        return data
 
 
 class StockTakeNotesUpdateSerializer(serializers.ModelSerializer):

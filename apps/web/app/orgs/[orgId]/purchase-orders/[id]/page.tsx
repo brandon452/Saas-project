@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 
 import { POLineAddForm } from "@/components/purchase-orders/POLineAddForm"
@@ -10,6 +10,7 @@ import { POStatusBadge } from "@/components/purchase-orders/POStatusBadge"
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -19,6 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { Textarea } from "@/components/ui/textarea"
 import { usePOBranches } from "@/lib/hooks/purchase-orders/usePOBranches"
 import { usePOMutations } from "@/lib/hooks/purchase-orders/usePOMutations"
 import { usePurchaseOrder } from "@/lib/hooks/purchase-orders/usePurchaseOrder"
@@ -35,25 +37,56 @@ export default function PurchaseOrderDetailPage() {
   const purchaseOrderQuery = usePurchaseOrder(orgId, poId)
   const suppliersQuery = usePOSuppliers(orgId)
   const branchesQuery = usePOBranches(orgId)
-  const { submitPO, cancelPO, addLine, updateLine, removeLine } = usePOMutations(orgId)
+  const { updatePO, submitPO, cancelPO, addLine, updateLine, removeLine } = usePOMutations(orgId)
 
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false)
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
   const [lineActionError, setLineActionError] = useState("")
+  const [headerError, setHeaderError] = useState("")
+  const [editSupplier, setEditSupplier] = useState("")
+  const [editBranch, setEditBranch] = useState("")
+  const [editNotes, setEditNotes] = useState("")
 
   const po = purchaseOrderQuery.data
 
-  const supplierMap = new Map((suppliersQuery.data ?? []).map((item) => [item.id, item.name]))
+  const supplierMap = new Map((suppliersQuery.data ?? []).map((item) => [String(item.id), item.display_name]))
   const branchMap = new Map((branchesQuery.data ?? []).map((item) => [item.id, item.name]))
 
   const errorMessage = purchaseOrderQuery.error instanceof Error ? purchaseOrderQuery.error.message : ""
   const isDraft = po?.status === "DRAFT"
   const isActionPending =
+    updatePO.isPending ||
     submitPO.isPending ||
     cancelPO.isPending ||
     addLine.isPending ||
     updateLine.isPending ||
     removeLine.isPending
+
+  useEffect(() => {
+    if (po) {
+      setEditSupplier(po.supplier)
+      setEditBranch(po.branch)
+      setEditNotes(po.notes)
+    }
+  }, [po?.id])
+
+  async function handleSaveHeader() {
+    if (!po) return
+    const data: { supplier?: string; branch?: string; notes?: string } = {}
+    if (editSupplier !== po.supplier) data.supplier = editSupplier
+    if (editBranch !== po.branch) data.branch = editBranch
+    if (editNotes !== po.notes) data.notes = editNotes
+    if (Object.keys(data).length === 0) return
+    try {
+      setHeaderError("")
+      await updatePO.mutateAsync({ poId: po.id, data })
+    } catch {
+      setHeaderError("Failed to save header changes.")
+    }
+  }
+
+  const headerChanged =
+    po && (editSupplier !== po.supplier || editBranch !== po.branch || editNotes !== po.notes)
 
   async function handleUpdateLine(
     lineId: number,
@@ -163,12 +196,65 @@ export default function PurchaseOrderDetailPage() {
         <CardHeader className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="space-y-3">
             <CardTitle>{po.po_number}</CardTitle>
-            <div className="grid gap-2 text-sm text-muted-foreground">
-              <p>Supplier: {supplierMap.get(po.supplier) ?? "—"}</p>
-              <p>Branch: {branchMap.get(po.branch) ?? "—"}</p>
-              <p>Created by: {po.created_by ?? "—"}</p>
-              <p>Created at: {new Date(po.created_at).toLocaleString()}</p>
-            </div>
+            {isDraft && canAccess(["OWNER", "ADMIN"]) ? (
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="edit-supplier" className="text-xs text-muted-foreground">Supplier</Label>
+                  <select
+                    id="edit-supplier"
+                    value={editSupplier}
+                    onChange={(e) => setEditSupplier(e.target.value)}
+                    disabled={isActionPending}
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm outline-none"
+                  >
+                    <option value="">Select supplier</option>
+                    {(suppliersQuery.data ?? []).filter((s) => s.is_active || String(s.id) === editSupplier).map((s) => (
+                      <option key={s.id} value={String(s.id)}>{s.display_name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="edit-branch" className="text-xs text-muted-foreground">Branch</Label>
+                  <select
+                    id="edit-branch"
+                    value={editBranch}
+                    onChange={(e) => setEditBranch(e.target.value)}
+                    disabled={isActionPending}
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm outline-none"
+                  >
+                    <option value="">Select branch</option>
+                    {(branchesQuery.data ?? []).map((b) => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <Label htmlFor="edit-notes" className="text-xs text-muted-foreground">Notes</Label>
+                  <Textarea
+                    id="edit-notes"
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    disabled={isActionPending}
+                    rows={2}
+                  />
+                </div>
+                {headerChanged ? (
+                  <div className="md:col-span-2 flex items-center gap-3">
+                    <Button size="sm" onClick={() => void handleSaveHeader()} disabled={isActionPending}>
+                      Save changes
+                    </Button>
+                    {headerError ? <p className="text-sm text-red-600">{headerError}</p> : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="grid gap-2 text-sm text-muted-foreground">
+                <p>Supplier: {supplierMap.get(po.supplier) ?? "—"}</p>
+                <p>Branch: {branchMap.get(po.branch) ?? "—"}</p>
+                <p>Created by: {po.created_by ?? "—"}</p>
+                <p>Created at: {new Date(po.created_at).toLocaleString()}</p>
+              </div>
+            )}
           </div>
           <div className="flex flex-col items-start gap-3 md:items-end">
             <POStatusBadge status={po.status} />
@@ -199,7 +285,7 @@ export default function PurchaseOrderDetailPage() {
         </CardHeader>
       </Card>
 
-      {po.notes ? (
+      {!isDraft && po.notes ? (
         <Card>
           <CardHeader>
             <CardTitle>Notes</CardTitle>

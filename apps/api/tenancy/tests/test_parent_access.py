@@ -63,6 +63,7 @@ class ParentAccessTests(APITestCase):
             item=self.item_a,
             quantity=Decimal("1.0000"),
             movement_type="RECEIPT",
+            unit_cost=Decimal("10.0000"),
             performed_by=self.org_owner_user,
             idempotency_key="parent-seed-a",
         )
@@ -72,6 +73,7 @@ class ParentAccessTests(APITestCase):
             item=self.item_a,
             quantity=Decimal("1.0000"),
             movement_type="RECEIPT",
+            unit_cost=Decimal("10.0000"),
             performed_by=self.org_owner_user,
             idempotency_key="parent-seed-b",
         )
@@ -168,6 +170,7 @@ class ParentAccessTests(APITestCase):
                 "item": str(self.item_a.id),
                 "quantity": "1.0000",
                 "movement_type": "RECEIPT",
+                "unit_cost": "5.0000",
                 "idempotency_key": "parent-write-block",
             },
             format="json",

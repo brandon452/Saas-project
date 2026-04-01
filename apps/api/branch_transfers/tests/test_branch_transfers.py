@@ -7,7 +7,7 @@ from rest_framework.test import APITestCase
 
 from branch_transfers.models import BranchTransfer
 from branches.models import Branch
-from inventory.models import MasterItem, OrgItem, StockLedger, StockOnHand
+from inventory.models import InventoryCostState, MasterItem, OrgItem, StockLedger, StockOnHand
 from inventory.services import record_stock_movement
 from suppliers.models import Supplier
 from tenancy.models import Organization, OrganizationMember, ParentCompanyMember
@@ -129,18 +129,21 @@ class BranchTransferApiTests(APITestCase):
             item=self.acme_item_a,
             quantity=Decimal(f"{qty_a}.0000"),
             movement_type=StockLedger.MOVEMENT_RECEIPT,
+            unit_cost=Decimal("10.0000"),
             performed_by=self.sender_owner,
             idempotency_key=f"seed-a-{qty_a}",
         )
-        record_stock_movement(
-            org=self.acme,
-            branch=self.acme_from_branch,
-            item=self.acme_item_b,
-            quantity=Decimal(f"{qty_b}.0000"),
-            movement_type=StockLedger.MOVEMENT_RECEIPT,
-            performed_by=self.sender_owner,
-            idempotency_key=f"seed-b-{qty_b}",
-        )
+        if qty_b > 0:
+            record_stock_movement(
+                org=self.acme,
+                branch=self.acme_from_branch,
+                item=self.acme_item_b,
+                quantity=Decimal(f"{qty_b}.0000"),
+                movement_type=StockLedger.MOVEMENT_RECEIPT,
+                unit_cost=Decimal("12.0000"),
+                performed_by=self.sender_owner,
+                idempotency_key=f"seed-b-{qty_b}",
+            )
 
     def _make_transfer(self, status=BranchTransfer.DRAFT):
         transfer = BranchTransfer.objects.for_org(self.acme).create(
@@ -153,6 +156,8 @@ class BranchTransferApiTests(APITestCase):
         )
         transfer.lines.create(item=self.acme_item_a, quantity_sent=3)
         transfer.lines.create(item=self.acme_item_b, quantity_sent=2)
+        if status == BranchTransfer.IN_TRANSIT:
+            transfer.lines.update(dispatched_unit_cost=Decimal("10.0000"))
         return transfer
 
     def test_create_rules_and_server_side_fields(self):
@@ -722,3 +727,63 @@ class BranchTransferApiTests(APITestCase):
         )
         stock = StockOnHand.objects.for_org(self.globex).get(branch=self.globex_branch, item=existing)
         self.assertEqual(stock.quantity, Decimal("1.0000"))
+
+    def test_dispatch_snapshots_avco_and_receive_recomputes_destination_cost(self):
+        self._seed_sender_stock(qty_a=10, qty_b=0)
+        receiver_item = OrgItem.objects.for_org(self.globex).create(
+            organization=self.globex,
+            master_item=self.acme_item_a.master_item,
+            name="Receiver Existing",
+        )
+        InventoryCostState.objects.create(
+            organization=self.globex,
+            branch=self.globex_branch,
+            item=receiver_item,
+            average_unit_cost=Decimal("8.0000"),
+            latest_unit_cost=Decimal("8.0000"),
+        )
+        StockOnHand.objects.create(
+            organization=self.globex,
+            branch=self.globex_branch,
+            item=receiver_item,
+            quantity=Decimal("10.0000"),
+        )
+
+        transfer = BranchTransfer.objects.for_org(self.acme).create(
+            organization=self.acme,
+            from_branch=self.acme_from_branch,
+            to_branch=self.globex_branch,
+            to_organization=self.globex,
+            status=BranchTransfer.APPROVED,
+            created_by=self.sender_owner,
+        )
+        line = transfer.lines.create(item=self.acme_item_a, quantity_sent=3)
+
+        self._auth(self.sender_owner)
+        dispatch_response = self.client.post(
+            self._detail_url(self.acme.id, transfer.id, "dispatch/"),
+            {},
+            format="json",
+            HTTP_HOST=self._host(self.acme.slug),
+        )
+        self.assertEqual(dispatch_response.status_code, 200)
+        line.refresh_from_db()
+        self.assertEqual(line.dispatched_unit_cost, Decimal("10.0000"))
+
+        self._auth(self.receiver_owner)
+        receive_response = self.client.post(
+            self._detail_url(self.globex.id, transfer.id, "receive/"),
+            {"lines": [{"line_id": line.id, "quantity_received": 3}]},
+            format="json",
+            HTTP_HOST=self._host(self.globex.slug),
+        )
+        self.assertEqual(receive_response.status_code, 200)
+
+        receiver_state = InventoryCostState.objects.get(
+            organization=self.globex,
+            branch=self.globex_branch,
+            item=receiver_item,
+        )
+        self.assertEqual(receiver_state.latest_unit_cost, Decimal("10.0000"))
+        self.assertEqual(receiver_state.average_unit_cost, Decimal("8.4615"))
+        self.assertIsNone(receiver_state.last_receipt_at)

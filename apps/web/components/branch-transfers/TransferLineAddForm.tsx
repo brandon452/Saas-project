@@ -130,8 +130,7 @@ export function TransferLineAddForm({
                   </TableCell>
                   <TableCell>
                     <Button
-                      variant="ghost"
-                      className="text-red-600 hover:text-red-700"
+                      variant="destructive"
                       onClick={() => removeLine(index)}
                       disabled={disabled}
                     >

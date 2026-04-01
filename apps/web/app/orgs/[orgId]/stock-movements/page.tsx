@@ -252,7 +252,7 @@ export default function StockMovementsPage() {
         </div>
 
         <div className="flex items-end">
-          <Button type="button" variant="ghost" className="w-full justify-center" onClick={clearFilters}>
+          <Button type="button" variant="outline" className="w-full justify-center" onClick={clearFilters}>
             Clear filters
           </Button>
         </div>

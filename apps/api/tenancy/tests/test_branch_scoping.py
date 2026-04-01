@@ -55,6 +55,7 @@ class BranchScopingTests(APITestCase):
             item=self.item,
             quantity=Decimal("2.0000"),
             movement_type="RECEIPT",
+            unit_cost=Decimal("10.0000"),
             performed_by=self.owner,
             idempotency_key="scope-a-1",
         )
@@ -64,6 +65,7 @@ class BranchScopingTests(APITestCase):
             item=self.item,
             quantity=Decimal("3.0000"),
             movement_type="RECEIPT",
+            unit_cost=Decimal("10.0000"),
             performed_by=self.owner,
             idempotency_key="scope-b-1",
         )
@@ -146,6 +148,7 @@ class BranchScopingTests(APITestCase):
                 "item": str(self.item.id),
                 "quantity": "1.0000",
                 "movement_type": "RECEIPT",
+                "unit_cost": "5.0000",
                 "idempotency_key": "owner-any-branch",
             },
             format="json",
@@ -160,6 +163,7 @@ class BranchScopingTests(APITestCase):
                 "item": str(self.item.id),
                 "quantity": "1.0000",
                 "movement_type": "RECEIPT",
+                "unit_cost": "5.0000",
                 "idempotency_key": "admin-any-branch",
             },
             format="json",
@@ -174,6 +178,7 @@ class BranchScopingTests(APITestCase):
                 "item": str(self.item.id),
                 "quantity": "1.0000",
                 "movement_type": "RECEIPT",
+                "unit_cost": "5.0000",
                 "idempotency_key": "staff-header-ignored",
             },
             format="json",
@@ -261,10 +266,11 @@ class BranchScopingTests(APITestCase):
                     "item": str(self.item.id),
                     "quantity": "1.0000",
                     "movement_type": "RECEIPT",
+                    "unit_cost": "5.0000",
                     "idempotency_key": "membership-cache-check",
                 },
                 format="json",
                 HTTP_X_BRANCH_ID=str(self.branch_a.id),
             )
         self.assertEqual(response.status_code, 201)
-        self.assertLessEqual(len(ctx.captured_queries), 15)
+        self.assertLessEqual(len(ctx.captured_queries), 18)

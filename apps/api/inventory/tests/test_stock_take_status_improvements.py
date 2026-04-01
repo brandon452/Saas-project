@@ -15,7 +15,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import BranchItem, MasterItem, OrgItem, StockOnHand, StockTake, StockTakeLine
+from inventory.models import BranchItem, InventoryCostState, MasterItem, OrgItem, StockOnHand, StockTake
 from inventory.services import (
     approve_stock_take,
     cancel_stock_take,
@@ -72,6 +72,15 @@ class StockTakeImprovementsTests(APITestCase):
         )
         StockOnHand.objects.create(
             organization=self.org, branch=self.branch_two, item=self.item_a, quantity=Decimal("2.0000")
+        )
+
+        InventoryCostState.objects.create(
+            organization=self.org, branch=self.branch, item=self.item_a,
+            average_unit_cost=Decimal("10.0000"), latest_unit_cost=Decimal("10.0000"),
+        )
+        InventoryCostState.objects.create(
+            organization=self.org, branch=self.branch, item=self.item_b,
+            average_unit_cost=Decimal("10.0000"), latest_unit_cost=Decimal("10.0000"),
         )
 
     def _auth(self, user):

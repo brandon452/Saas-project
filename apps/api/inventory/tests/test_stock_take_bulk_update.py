@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import BranchItem, MasterItem, OrgItem, StockOnHand, StockTake, StockTakeLine
+from inventory.models import BranchItem, MasterItem, OrgItem, StockOnHand, StockTake
 from inventory.services import start_stock_take, submit_stock_take
 from tenancy.models import Organization, OrganizationMember
 

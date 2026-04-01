@@ -1,17 +1,35 @@
-﻿node_modules/
+# Dependencies
+node_modules/
+apps/web/node_modules/
+
+# Build output
 .next/
 apps/web/.next/
-apps/web/node_modules/
+apps/web/out/
+apps/web/tsconfig.tsbuildinfo
+apps/api/staticfiles/
+
+# Python virtualenv and cache
 apps/api/.venv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
 apps/api/__pycache__/
 apps/api/**/__pycache__/
 apps/api/**/*.pyc
-apps/api/.env
-apps/api/db.sqlite3
-apps/api/staticfiles/
-.env
-apps/web/.env.local
-apps/web/out/
-apps/web/tsconfig.tsbuildinfo
-*.log
 
+# Environment files
+.env
+apps/api/.env
+apps/web/.env.local
+
+# Local databases
+apps/api/db.sqlite3
+
+# Logs and local runtime files
+*.log
+.manual-run-pids
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
