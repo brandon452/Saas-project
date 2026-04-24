@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from .models import ParentCompanyMember
 from .permissions import IsParentAdmin
+from .permissions import get_parent_membership
 from .serializers import ParentMemberCreateSerializer, ParentMemberSerializer, ParentMemberUpdateSerializer
 
 
@@ -13,7 +14,10 @@ class ParentMemberViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
-        return ParentCompanyMember.objects.select_related("user", "created_by")
+        parent = get_parent_membership(self.request)
+        return ParentCompanyMember.objects.filter(
+            parent_company=parent.parent_company,
+        ).select_related("user", "created_by", "parent_company")
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -23,7 +27,8 @@ class ParentMemberViewSet(viewsets.ModelViewSet):
         return ParentMemberSerializer
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        parent = get_parent_membership(self.request)
+        serializer.save(parent_company=parent.parent_company, created_by=self.request.user)
 
     def perform_destroy(self, instance):
         if instance.user_id == self.request.user.id:

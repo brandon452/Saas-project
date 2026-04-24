@@ -17,6 +17,13 @@ def post_po_receipt(receipt, lines_data, performed_by, organization):
     po = PurchaseOrder.objects.select_for_update().get(pk=receipt.purchase_order_id)
     branch = receipt.branch
 
+    # Re-check status under row lock to prevent races with concurrent PO state changes
+    # (e.g., cancellation after request validation but before receipt posting).
+    if po.status not in (PurchaseOrder.SUBMITTED, PurchaseOrder.PARTIALLY_RECEIVED):
+        raise ValidationError(
+            f"Cannot receive against a purchase order with status {po.status}."
+        )
+
     assert_inventory_period_open(organization, receipt.received_at)
 
     po_line_ids = [line_data["po_line"].pk for line_data in lines_data]

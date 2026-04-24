@@ -3,16 +3,25 @@ from rest_framework import serializers
 
 from branches.models import Branch
 
-from .models import Organization, OrganizationMember, ParentCompanyMember
+from .models import Organization, OrganizationMember, ParentCompany, ParentCompanyMember
 
 User = get_user_model()
 
 
 class OrganizationSerializer(serializers.ModelSerializer):
+    parent_company_name = serializers.CharField(source="parent_company.name", read_only=True)
+
     class Meta:
         model = Organization
-        fields = ["id", "name", "slug"]
-        read_only_fields = ["id", "name", "slug"]
+        fields = ["id", "name", "slug", "parent_company", "parent_company_name"]
+        read_only_fields = ["id", "name", "slug", "parent_company", "parent_company_name"]
+
+
+class ParentCompanySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ParentCompany
+        fields = ["id", "name", "slug", "is_active", "created_at"]
+        read_only_fields = ["id", "created_at"]
 
 
 class MemberUserSerializer(serializers.ModelSerializer):
@@ -178,11 +187,12 @@ class ParentMemberUserSerializer(serializers.ModelSerializer):
 class ParentMemberSerializer(serializers.ModelSerializer):
     user = ParentMemberUserSerializer(read_only=True)
     created_by = ParentMemberUserSerializer(read_only=True)
+    parent_company_name = serializers.CharField(source="parent_company.name", read_only=True)
 
     class Meta:
         model = ParentCompanyMember
-        fields = ["id", "user", "role", "is_active", "created_at", "created_by"]
-        read_only_fields = ["id", "user", "created_at", "created_by"]
+        fields = ["id", "user", "parent_company", "parent_company_name", "role", "is_active", "created_at", "created_by"]
+        read_only_fields = ["id", "user", "parent_company", "parent_company_name", "created_at", "created_by"]
 
 
 class ParentMemberCreateSerializer(serializers.ModelSerializer):

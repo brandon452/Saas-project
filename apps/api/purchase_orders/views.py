@@ -1,6 +1,6 @@
 import logging
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed, ValidationError as DRFValidationError
@@ -87,12 +87,22 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
                 self.request.user,
             )
             raise DRFValidationError({"detail": "Branch does not belong to this organisation."})
-        po_number = generate_po_number(self.request.org)
-        serializer.save(
-            organization=self.request.org,
-            created_by=self.request.user,
-            po_number=po_number,
-        )
+        for _ in range(5):
+            po_number = generate_po_number(self.request.org)
+            try:
+                serializer.save(
+                    organization=self.request.org,
+                    created_by=self.request.user,
+                    po_number=po_number,
+                )
+                return
+            except IntegrityError as exc:
+                # Retry on rare sequence race collisions.
+                if "unique_po_number_per_org" not in str(exc):
+                    raise
+                continue
+
+        raise DRFValidationError({"detail": "Could not allocate a unique PO number. Please retry."})
 
     @action(detail=True, methods=["post"], url_path="submit")
     @transaction.atomic

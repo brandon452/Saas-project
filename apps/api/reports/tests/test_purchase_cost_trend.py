@@ -62,17 +62,17 @@ class PurchaseCostTrendApiTests(APITestCase):
 
         self.supplier_a = Supplier.objects.for_org(self.acme).create(
             organization=self.acme,
-            name="Acme Supplier A",
+            display_name="Acme Supplier A",
             created_by=self.owner,
         )
         self.supplier_b = Supplier.objects.for_org(self.acme).create(
             organization=self.acme,
-            name="Acme Supplier B",
+            display_name="Acme Supplier B",
             created_by=self.owner,
         )
         self.globex_supplier = Supplier.objects.for_org(self.globex).create(
             organization=self.globex,
-            name="Globex Supplier",
+            display_name="Globex Supplier",
         )
 
         self.item = self._create_org_item(self.acme, "Tracked Item", "TREND-ITEM")

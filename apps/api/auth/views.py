@@ -9,12 +9,9 @@ from django.middleware.csrf import get_token
 from django.utils.decorators import method_decorator
 from django.utils.timezone import now
 from django.views.decorators.csrf import csrf_exempt
-
-logger = logging.getLogger(__name__)
-
 from django_ratelimit.decorators import ratelimit
-from rest_framework.authentication import CSRFCheck
 from rest_framework import status
+from rest_framework.authentication import CSRFCheck
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -28,6 +25,7 @@ from tenancy.permissions import get_parent_membership
 from .mixins import AuthCookieMixin
 from .models import AuthAuditLog, PasswordSetToken
 
+logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
@@ -182,11 +180,13 @@ class PasswordSetDetailView(APIView):
 
         # Derive parent_role from user's ParentCompanyMember if org is null
         parent_role = None
+        parent_company_name = None
         if org_name is None:
             from tenancy.models import ParentCompanyMember
             try:
-                pm = ParentCompanyMember.objects.get(user=pst.user)
+                pm = ParentCompanyMember.objects.select_related("parent_company").get(user=pst.user)
                 parent_role = pm.role
+                parent_company_name = pm.parent_company.name
             except ParentCompanyMember.DoesNotExist:
                 pass
 
@@ -195,6 +195,7 @@ class PasswordSetDetailView(APIView):
             "first_name": pst.user.first_name,
             "org_name": org_name,
             "parent_role": parent_role,
+            "parent_company_name": parent_company_name,
         })
 
 
@@ -281,8 +282,11 @@ class MeView(APIView):
                 "email": request.user.email,
                 "first_name": request.user.first_name,
                 "last_name": request.user.last_name,
+                "is_superuser": request.user.is_superuser,
                 "is_parent_member": parent_membership is not None,
                 "parent_role": parent_membership.role if parent_membership else None,
+                "parent_company_id": str(parent_membership.parent_company_id) if parent_membership else None,
+                "parent_company_name": parent_membership.parent_company.name if parent_membership else None,
                 "memberships": [
                     {
                         "org_id": str(membership.organization_id),

@@ -128,7 +128,7 @@ export default function BranchTransfersPage() {
         ) : null}
       </div>
 
-      <div className="grid gap-4 rounded-xl border border-border bg-card p-4 md:grid-cols-[1fr_auto]">
+      <div className="grid gap-4 rounded-xl border border-border bg-card p-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))]">
         <div className="space-y-2">
           <label htmlFor="status" className="text-sm font-medium">
             Status
@@ -209,7 +209,7 @@ export default function BranchTransfersPage() {
 
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted-foreground">Total branch transfers: {count}</p>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="ghost"
             disabled={currentPage <= 1}

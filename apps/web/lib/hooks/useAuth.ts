@@ -17,8 +17,11 @@ export interface AuthUser {
   email: string
   first_name: string
   last_name: string
+  is_superuser: boolean
   is_parent_member: boolean
   parent_role: "PARENT_ADMIN" | "PARENT_VIEWER" | null
+  parent_company_id: string | null
+  parent_company_name: string | null
   memberships: Membership[]
 }
 

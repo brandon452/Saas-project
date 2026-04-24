@@ -222,7 +222,7 @@ export default function StockValuationPage() {
       </div>
 
       {/* Filter bar */}
-      <div className="grid gap-4 rounded-xl border border-border bg-card p-4 md:grid-cols-[minmax(0,1fr)_220px_220px]">
+      <div className="grid gap-4 rounded-xl border border-border bg-card p-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))]">
         <div className="space-y-2">
           <Label htmlFor="sv-search">Search</Label>
           <Input

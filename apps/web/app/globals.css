@@ -47,6 +47,9 @@ body {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
+  min-width: 0;
 }

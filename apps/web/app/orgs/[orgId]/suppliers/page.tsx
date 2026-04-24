@@ -129,7 +129,7 @@ export default function SuppliersPage() {
         {canManage ? <Button onClick={() => setCreateOpen(true)}>New Supplier</Button> : null}
       </div>
 
-      <div className="grid gap-4 rounded-xl border border-border bg-card p-4 md:grid-cols-[2fr_1fr]">
+      <div className="grid gap-4 rounded-xl border border-border bg-card p-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))]">
         <div className="space-y-2">
           <Label htmlFor="supplier-search">Name search</Label>
           <Input
@@ -218,7 +218,7 @@ export default function SuppliersPage() {
 
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted-foreground">Total suppliers: {count}</p>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="ghost"
             disabled={page <= 1}

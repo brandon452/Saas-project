@@ -74,12 +74,12 @@ class BranchTransferApiTests(APITestCase):
 
         self.acme_supplier = Supplier.objects.for_org(self.acme).create(
             organization=self.acme,
-            name="Acme Supplier",
+            display_name="Acme Supplier",
             created_by=self.sender_owner,
         )
         self.globex_supplier = Supplier.objects.for_org(self.globex).create(
             organization=self.globex,
-            name="Globex Supplier",
+            display_name="Globex Supplier",
             created_by=self.receiver_owner,
         )
 

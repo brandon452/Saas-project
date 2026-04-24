@@ -157,7 +157,7 @@ export function StockFilters({
   }
 
   return (
-    <div className="grid gap-4 rounded-xl border border-border bg-card p-4 md:grid-cols-[220px_minmax(0,1fr)_auto]">
+    <div className="grid gap-4 rounded-xl border border-border bg-card p-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))]">
       <div className="space-y-2">
         <label htmlFor="stock-branch" className="text-sm font-medium">
           Branch
@@ -182,9 +182,10 @@ export function StockFilters({
           Item
         </label>
         <div className="relative">
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <Input
               id="stock-item"
+              className="min-w-0"
               value={itemInput}
               placeholder={itemParam && !selectedItemLabel ? "Selected item" : "Search items by name or SKU"}
               onFocus={() => setIsResultsOpen(true)}

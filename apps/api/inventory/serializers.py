@@ -51,6 +51,27 @@ class MasterItemSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "sku", "is_active", "created_at"]
         read_only_fields = ["id", "created_at"]
 
+    def validate_sku(self, value):
+        request = self.context.get("request")
+        parent = getattr(request, "_cached_parent_membership", None) if request else None
+        if parent is None and request:
+            from tenancy.permissions import get_parent_membership
+
+            parent = get_parent_membership(request)
+
+        if parent is None:
+            return value
+
+        queryset = MasterItem.objects.filter(
+            parent_company=parent.parent_company,
+            sku=value,
+        )
+        if self.instance:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise serializers.ValidationError("Master item SKU already exists for this parent company.")
+        return value
+
 
 class OrgItemSerializer(serializers.ModelSerializer):
     sku = serializers.CharField(source="master_item.sku", read_only=True)
@@ -84,6 +105,9 @@ class OrgItemCreateSerializer(serializers.ModelSerializer):
     def validate_master_item(self, value):
         if not value.is_active:
             raise serializers.ValidationError("Cannot activate an inactive master item.")
+        request = self.context["request"]
+        if value.parent_company_id != request.org.parent_company_id:
+            raise serializers.ValidationError("Master item does not belong to this parent company.")
         return value
 
     def validate(self, attrs):

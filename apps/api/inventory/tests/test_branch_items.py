@@ -79,7 +79,7 @@ class BranchItemApiTests(APITestCase):
 
         self.supplier = Supplier.objects.for_org(self.acme).create(
             organization=self.acme,
-            name="Acme Supplier",
+            display_name="Acme Supplier",
             created_by=self.owner,
         )
         self.purchase_order = PurchaseOrder.objects.for_org(self.acme).create(
@@ -330,7 +330,7 @@ class BranchItemApiTests(APITestCase):
             status=BranchTransfer.IN_TRANSIT,
             created_by=self.owner,
         )
-        transfer.lines.create(item=self.item_a, quantity_sent=2)
+        transfer.lines.create(item=self.item_a, quantity_sent=2, dispatched_unit_cost=Decimal("10.0000"))
 
         receive_transfer(
             transfer=transfer,
@@ -357,7 +357,7 @@ class BranchItemApiTests(APITestCase):
             status=BranchTransfer.IN_TRANSIT,
             created_by=self.owner,
         )
-        transfer_two.lines.create(item=self.item_a, quantity_sent=1)
+        transfer_two.lines.create(item=self.item_a, quantity_sent=1, dispatched_unit_cost=Decimal("10.0000"))
 
         receive_transfer(
             transfer=transfer_two,

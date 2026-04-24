@@ -27,6 +27,7 @@ from suppliers.views import SupplierViewSet
 from tenancy.invitation_views import CreateParentMemberView, CreateUserView
 from tenancy.org_views import OrgGovernanceView, OrgListCreateView
 from tenancy.parent_views import ParentMemberViewSet
+from tenancy.setup_views import FirstRunSetupView, OperatorParentCompanyView, SetupStatusView
 from tenancy.views import MemberSearchView, MemberViewSet
 
 org_router = DefaultRouter()
@@ -52,6 +53,9 @@ urlpatterns = [
     path("health/", HealthView.as_view(), name="health"),
     path("token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+    path("setup/status/", SetupStatusView.as_view(), name="setup-status"),
+    path("setup/first-run/", FirstRunSetupView.as_view(), name="setup-first-run"),
+    path("operator/parent-companies/", OperatorParentCompanyView.as_view(), name="operator-parent-companies"),
     path("orgs/", OrgListCreateView.as_view(), name="org-list"),
     path("orgs/<uuid:org_id>/governance/", OrgGovernanceView.as_view(), name="org-governance"),
     path("orgs/<uuid:org_id>/network-branches/", NetworkBranchView.as_view(), name="network-branches"),

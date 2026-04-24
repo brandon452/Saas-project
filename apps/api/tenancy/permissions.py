@@ -119,9 +119,10 @@ def get_parent_membership(request):
         return None
 
     try:
-        membership = ParentCompanyMember.objects.get(
+        membership = ParentCompanyMember.objects.select_related("parent_company").get(
             user=request.user,
             is_active=True,
+            parent_company__is_active=True,
         )
     except ParentCompanyMember.DoesNotExist:
         membership = None
@@ -220,7 +221,8 @@ class IsOrgMemberOrParent(BasePermission):
         if not hasattr(request, "org") or request.org is None:
             return False
 
-        if get_parent_membership(request):
+        parent = get_parent_membership(request)
+        if parent and parent.parent_company_id == request.org.parent_company_id:
             return True
 
         return OrganizationMember.objects.filter(
@@ -255,7 +257,7 @@ class IsParentMember(BasePermission):
 
     def has_permission(self, request, view):
         parent = get_parent_membership(request)
-        return bool(parent and parent.is_active)
+        return bool(parent and parent.is_active and parent.parent_company.is_active)
 
 
 class IsOrgOwnerOrAdmin(BasePermission):
@@ -282,7 +284,7 @@ class IsOrgOwnerOrParentAdmin(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
         parent = get_parent_membership(request)
-        if parent:
+        if parent and parent.parent_company_id == request.org.parent_company_id:
             return parent.role == ParentCompanyMember.PARENT_ADMIN
         role = get_member_role(request)
         return role == "OWNER"
@@ -298,7 +300,7 @@ class IsOrgOwnerOrAdminOrParentAdmin(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
         parent = get_parent_membership(request)
-        if parent:
+        if parent and parent.parent_company_id == request.org.parent_company_id:
             return parent.role == ParentCompanyMember.PARENT_ADMIN
         role = get_member_role(request)
         return role in {"OWNER", "ADMIN"}
@@ -319,7 +321,7 @@ class RolePolicyPermission(BasePermission):
             return False
 
         parent = get_parent_membership(request)
-        if parent:
+        if parent and parent.parent_company_id == request.org.parent_company_id:
             return request.method in ("GET", "HEAD", "OPTIONS")
 
         role = get_member_role(request)

@@ -1,7 +1,7 @@
 from datetime import date, datetime, time
 
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django_ratelimit.core import is_ratelimited
 from rest_framework import status
@@ -92,7 +92,24 @@ class GoodsReceiptViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
             )
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
+        idempotency_key = serializer.validated_data.get("idempotency_key")
+
+        if idempotency_key:
+            existing = GoodsReceipt.objects.for_org(request.org).filter(idempotency_key=idempotency_key).first()
+            if existing is not None:
+                out = GoodsReceiptSerializer(existing, context={"request": request})
+                return Response(out.data, status=status.HTTP_200_OK)
+
+        try:
+            self.perform_create(serializer)
+        except IntegrityError:
+            if idempotency_key:
+                existing = GoodsReceipt.objects.for_org(request.org).filter(idempotency_key=idempotency_key).first()
+                if existing is not None:
+                    out = GoodsReceiptSerializer(existing, context={"request": request})
+                    return Response(out.data, status=status.HTTP_200_OK)
+            raise
+
         out = GoodsReceiptSerializer(serializer.instance, context={"request": request})
         return Response(out.data, status=status.HTTP_201_CREATED)
 

@@ -163,7 +163,7 @@ export default function StockMovementsPage() {
         </p>
       </div>
 
-      <div className="grid gap-4 rounded-xl border border-border bg-card p-4 md:grid-cols-2 xl:grid-cols-[220px_220px_1fr_180px_180px_180px_auto]">
+      <div className="grid gap-4 rounded-xl border border-border bg-card p-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))]">
         <div className="space-y-2">
           <label htmlFor="movement-branch" className="text-sm font-medium">
             Branch
@@ -258,7 +258,7 @@ export default function StockMovementsPage() {
         </div>
 
         {hasInvalidDateRange ? (
-          <div className="md:col-span-2 xl:col-span-7">
+          <div className="col-span-full">
             <p className="text-sm text-red-600">From date must be on or before to date.</p>
           </div>
         ) : null}
@@ -317,7 +317,7 @@ export default function StockMovementsPage() {
 
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted-foreground">Total stock movements: {count}</p>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="ghost"
             disabled={currentPage <= 1}

@@ -12,8 +12,9 @@ from rest_framework.views import APIView
 from auth.models import PasswordSetToken
 from branches.models import Branch
 from django.conf import settings
+from django.utils.text import slugify
 
-from .models import Organization, OrganizationMember, ParentCompanyMember
+from .models import Organization, OrganizationMember, ParentCompany, ParentCompanyMember, get_default_parent_company
 from .permissions import IsOrgMemberOrParent, get_member_role, get_parent_membership
 
 User = get_user_model()
@@ -186,6 +187,8 @@ class CreateParentMemberView(APIView):
         first_name = (request.data.get("first_name") or "").strip()
         last_name = (request.data.get("last_name") or "").strip()
         role = (request.data.get("role") or "").strip().upper()
+        parent_company_name = (request.data.get("parent_company_name") or "").strip()
+        parent_company_slug = (request.data.get("parent_company_slug") or "").strip()
 
         valid_roles = {ParentCompanyMember.PARENT_ADMIN, ParentCompanyMember.PARENT_VIEWER}
 
@@ -205,6 +208,15 @@ class CreateParentMemberView(APIView):
             raise ValidationError({"email": "A parent member with this email already exists."})
 
         with transaction.atomic():
+            if parent_company_name:
+                slug = parent_company_slug or slugify(parent_company_name)
+                parent_company, _ = ParentCompany.objects.get_or_create(
+                    slug=slug,
+                    defaults={"name": parent_company_name},
+                )
+            else:
+                parent_company = get_default_parent_company()
+
             user = User.objects.create_user(
                 username=email,
                 email=email,
@@ -217,6 +229,7 @@ class CreateParentMemberView(APIView):
 
             ParentCompanyMember.objects.create(
                 user=user,
+                parent_company=parent_company,
                 role=role,
                 created_by=request.user,
             )
@@ -227,6 +240,8 @@ class CreateParentMemberView(APIView):
             {
                 "user_id": user.id,
                 "email": user.email,
+                "parent_company_id": parent_company.id,
+                "parent_company_name": parent_company.name,
                 "role": role,
                 "set_password_url": _build_set_password_url(token.token),
             },

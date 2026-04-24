@@ -355,8 +355,8 @@ export default function CostTrendReportPage() {
         </p>
       </div>
 
-      <div className="grid gap-4 rounded-xl border border-border bg-card p-4 md:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_180px_180px_220px_220px]">
-        <div className="space-y-2 xl:col-span-1">
+      <div className="grid gap-4 rounded-xl border border-border bg-card p-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))]">
+        <div className="min-w-0 space-y-2">
           <Label htmlFor="cost-trend-item-search">Item</Label>
           <Input
             id="cost-trend-item-search"
@@ -448,7 +448,7 @@ export default function CostTrendReportPage() {
         </div>
 
         {hasInvalidDateRange ? (
-          <div className="md:col-span-2 xl:col-span-5">
+          <div className="col-span-full">
             <p className="text-sm text-red-600">From date must be on or before to date.</p>
           </div>
         ) : null}

@@ -7,7 +7,7 @@ from rest_framework.test import APITestCase
 from branches.models import Branch
 from inventory.models import MasterItem, OrgItem
 from inventory.services import record_stock_movement
-from tenancy.models import Organization, OrganizationMember, ParentCompanyMember
+from tenancy.models import Organization, OrganizationMember, ParentCompany, ParentCompanyMember
 
 
 class ParentAccessTests(APITestCase):
@@ -23,6 +23,7 @@ class ParentAccessTests(APITestCase):
         User = get_user_model()
         self.parent_admin_user = User.objects.create_user(username="parent_admin", password="Passw0rd!")
         self.parent_viewer_user = User.objects.create_user(username="parent_viewer", password="Passw0rd!")
+        self.other_parent_admin_user = User.objects.create_user(username="other_parent_admin", password="Passw0rd!")
         self.org_owner_user = User.objects.create_user(username="org_owner", password="Passw0rd!")
         self.org_staff_user = User.objects.create_user(username="org_staff", password="Passw0rd!")
         self.target_user = User.objects.create_user(username="target_parent", password="Passw0rd!")
@@ -30,6 +31,12 @@ class ParentAccessTests(APITestCase):
         self.acme = Organization.objects.create(name="Acme", slug="acme")
         self.globex = Organization.objects.create(name="Globex", slug="globex")
         self.inactive = Organization.objects.create(name="Inactive", slug="inactive", is_active=False)
+        self.other_parent_company = ParentCompany.objects.create(name="Other Parent", slug="other-parent")
+        self.other_parent_org = Organization.objects.create(
+            parent_company=self.other_parent_company,
+            name="Other Parent Org",
+            slug="other-parent-org",
+        )
 
         self.acme_branch_a = Branch.objects.for_org(self.acme).create(organization=self.acme, name="A", code="A")
         self.acme_branch_b = Branch.objects.for_org(self.acme).create(organization=self.acme, name="B", code="B")
@@ -54,6 +61,13 @@ class ParentAccessTests(APITestCase):
             role=ParentCompanyMember.PARENT_VIEWER,
             is_active=True,
             created_by=self.parent_admin_user,
+        )
+        self.other_parent_admin = ParentCompanyMember.objects.create(
+            user=self.other_parent_admin_user,
+            parent_company=self.other_parent_company,
+            role=ParentCompanyMember.PARENT_ADMIN,
+            is_active=True,
+            created_by=self.other_parent_admin_user,
         )
 
         self.item_a = self._create_org_item(self.acme, "I1", "I1")
@@ -119,6 +133,16 @@ class ParentAccessTests(APITestCase):
         self.assertIn(str(self.acme.id), org_ids)
         self.assertIn(str(self.globex.id), org_ids)
         self.assertNotIn(str(self.inactive.id), org_ids)
+        self.assertNotIn(str(self.other_parent_org.id), org_ids)
+
+    def test_parent_access_is_scoped_to_own_parent_company(self):
+        self._auth(self.other_parent_admin_user)
+
+        foreign_org = self.client.get(self._org_url(self.acme.id, "inventory/items/"))
+        self.assertEqual(foreign_org.status_code, 403)
+
+        own_org = self.client.get(self._org_url(self.other_parent_org.id, "inventory/items/"))
+        self.assertEqual(own_org.status_code, 200)
 
     def test_governance_endpoints(self):
         self._auth(self.parent_admin_user)

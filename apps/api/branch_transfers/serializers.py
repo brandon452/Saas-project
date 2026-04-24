@@ -2,8 +2,6 @@ from rest_framework import serializers
 
 from inventory.models import BranchItem
 from inventory.serializers import ItemSummarySerializer, PerformedBySerializer
-from tenancy.models import ParentCompanyMember
-
 from .models import BranchTransfer, BranchTransferLine
 
 
@@ -116,12 +114,13 @@ class BranchTransferCreateSerializer(serializers.ModelSerializer):
         return value
 
     def _orgs_share_parent(self, org_a, org_b):
-        # Revision C exposes a single global parent-company membership model rather
-        # than a per-organization parent foreign key. In this schema, all active
-        # organizations sit under the same parent-company context.
         if org_a == org_b:
             return True
-        return org_a.is_active and org_b.is_active and ParentCompanyMember.objects.filter(is_active=True).exists()
+        return (
+            org_a.is_active
+            and org_b.is_active
+            and org_a.parent_company_id == org_b.parent_company_id
+        )
 
     def validate(self, attrs):
         if attrs.get("from_branch") == attrs.get("to_branch"):

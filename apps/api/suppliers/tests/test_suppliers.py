@@ -366,10 +366,10 @@ class SupplierApiTests(SupplierTestBase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("display_name", r.data)
 
-        # Case-insensitive duplicate
-        r = self.client.post(self._url(), {"name": "acme supplies"}, format="json", HTTP_HOST=self._host())
+        # Case-insensitive duplicate (submitted via legacy "name" field)
+        r = self.client.post(self._url(), {"display_name": "acme supplies"}, format="json", HTTP_HOST=self._host())
         self.assertEqual(r.status_code, 400)
-        self.assertIn("name", r.data)
+        self.assertIn("display_name", r.data)
 
     def test_create_name_blank_rejected(self):
         self._auth(self.owner)
@@ -475,8 +475,10 @@ class SupplierContactApiTests(SupplierTestBase):
     def _contact_url(self, supplier_id, contact_id=None, suffix=""):
         base = f"/api/orgs/{self.acme.id}/suppliers/{supplier_id}/contacts/"
         if contact_id is not None:
-            return f"/api/orgs/{self.acme.id}/suppliers/{supplier_id}/contacts/{contact_id}/{suffix}"
-        return f"{base}{suffix}"
+            path = f"/api/orgs/{self.acme.id}/suppliers/{supplier_id}/contacts/{contact_id}/{suffix}"
+            return path if path.endswith("/") else path + "/"
+        path = f"{base}{suffix}"
+        return path if path.endswith("/") else path + "/"
 
     def test_list_contacts_visible_to_all_roles(self):
         contact = SupplierContact.objects.create(

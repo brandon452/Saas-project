@@ -41,6 +41,7 @@ class GoodsReceipt(TenantModel):
         blank=True,
     )
     source_reference = models.TextField(blank=True)
+    idempotency_key = models.CharField(max_length=128, null=True, blank=True)
     received_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -53,6 +54,13 @@ class GoodsReceipt(TenantModel):
 
     class Meta:
         ordering = ["-received_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "idempotency_key"],
+                condition=models.Q(idempotency_key__isnull=False),
+                name="unique_goods_receipt_idempotency_key_per_org",
+            ),
+        ]
 
     def __str__(self):
         if self.purchase_order_id:

@@ -49,7 +49,7 @@ export function GoodsReceiptFilters({ branches, suppliers }: GoodsReceiptFilters
   }
 
   return (
-    <div className="grid gap-4 rounded-xl border border-border bg-card p-4 md:grid-cols-2 xl:grid-cols-6">
+    <div className="grid gap-4 rounded-xl border border-border bg-card p-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))]">
       <div className="space-y-2">
         <Label htmlFor="receipt_type">Receipt type</Label>
         <select
@@ -125,7 +125,7 @@ export function GoodsReceiptFilters({ branches, suppliers }: GoodsReceiptFilters
       </div>
 
       {hasInvalidDateRange ? (
-        <div className="md:col-span-2 xl:col-span-6">
+        <div className="col-span-full">
           <p className="text-sm text-red-600">Date from must be on or before date to.</p>
         </div>
       ) : null}

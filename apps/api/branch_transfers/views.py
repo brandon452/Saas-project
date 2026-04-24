@@ -69,6 +69,7 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
         if parent_membership:
             return (
                 BranchTransfer.all_objects
+                .filter(organization__parent_company=parent_membership.parent_company)
                 .select_related(
                     "from_branch",
                     "to_branch",

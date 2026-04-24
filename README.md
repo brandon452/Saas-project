@@ -43,6 +43,13 @@ npm run api:migrate
 npm run api:createsuperuser
 ```
 
+## Initial Production Run
+For the first live startup flow, including `/setup` and adding parent companies later, see:
+
+```text
+docs/initial-run.md
+```
+
 ## Start Dev Servers
 ```powershell
 npm run dev

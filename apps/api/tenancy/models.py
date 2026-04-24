@@ -6,8 +6,38 @@ from django.db import models
 from .managers import OrganizationMemberManager, TenantManager
 
 
+DEFAULT_PARENT_COMPANY_SLUG = "default-parent-company"
+
+
+def get_default_parent_company():
+    return ParentCompany.objects.get_or_create(
+        slug=DEFAULT_PARENT_COMPANY_SLUG,
+        defaults={"name": "Default Parent Company"},
+    )[0]
+
+
+class ParentCompany(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    slug = models.SlugField(unique=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "Parent Company"
+        verbose_name_plural = "Parent Companies"
+
+    def __str__(self):
+        return self.name
+
+
 class Organization(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    parent_company = models.ForeignKey(
+        ParentCompany,
+        on_delete=models.PROTECT,
+        related_name="organizations",
+    )
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -15,6 +45,11 @@ class Organization(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.parent_company_id:
+            self.parent_company = get_default_parent_company()
+        return super().save(*args, **kwargs)
 
 
 class TenantModel(models.Model):
@@ -82,6 +117,11 @@ class ParentCompanyMember(models.Model):
         on_delete=models.CASCADE,
         related_name="parent_membership",
     )
+    parent_company = models.ForeignKey(
+        ParentCompany,
+        on_delete=models.PROTECT,
+        related_name="members",
+    )
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -101,3 +141,8 @@ class ParentCompanyMember(models.Model):
 
     def __str__(self):
         return f"{self.user} - {self.role}"
+
+    def save(self, *args, **kwargs):
+        if not self.parent_company_id:
+            self.parent_company = get_default_parent_company()
+        return super().save(*args, **kwargs)

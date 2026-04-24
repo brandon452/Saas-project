@@ -216,7 +216,7 @@ export default function BranchItemsPage() {
           </p>
         </div>
 
-        <div className="grid gap-4 rounded-xl border border-border bg-card p-4 md:grid-cols-[1fr_2fr]">
+        <div className="grid gap-4 rounded-xl border border-border bg-card p-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))]">
           <div className="space-y-2">
             <Label htmlFor="branch-items-branch">Branch</Label>
             <select
@@ -268,7 +268,7 @@ export default function BranchItemsPage() {
                 <p className="text-sm text-red-600">{bulkDeactivateError}</p>
               ) : null}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {selectedIds.size > 0 ? (
                 <Button
                   disabled={bulkActivateBranchItems.isPending}
@@ -456,7 +456,7 @@ export default function BranchItemsPage() {
 
             <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted-foreground">Total items: {count}</p>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <Button
                   variant="ghost"
                   disabled={page === "1"}

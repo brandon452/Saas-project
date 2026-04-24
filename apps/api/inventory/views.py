@@ -6,7 +6,6 @@ from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework.decorators import action
 from rest_framework import status, viewsets
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError as DRFValidationError
-from rest_framework.generics import get_object_or_404
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
@@ -28,7 +27,7 @@ from tenancy.permissions import (
 )
 
 from .models import (
-    BranchItem, InventoryClosePeriod, InventoryCloseSnapshot,
+    BranchItem, InventoryClosePeriod,
     MasterItem, OrgItem, StockLedger, StockOnHand, StockTake, StockTakeLine,
 )
 from .serializers import (
@@ -129,7 +128,7 @@ class OrgItemViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedMixin, 
 
 class MasterItemViewSet(viewsets.ModelViewSet):
     serializer_class = MasterItemSerializer
-    queryset = MasterItem.objects.all()
+    queryset = MasterItem.objects.none()
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ["name", "sku"]
     ordering_fields = ["name", "sku", "created_at"]
@@ -139,6 +138,16 @@ class MasterItemViewSet(viewsets.ModelViewSet):
         if self.action in ("list", "retrieve"):
             return [IsAuthenticated(), IsParentMember()]
         return [IsAuthenticated(), IsParentAdmin()]
+
+    def get_queryset(self):
+        parent = get_parent_membership(self.request)
+        if not parent:
+            return MasterItem.objects.none()
+        return MasterItem.objects.filter(parent_company=parent.parent_company)
+
+    def perform_create(self, serializer):
+        parent = get_parent_membership(self.request)
+        serializer.save(parent_company=parent.parent_company)
 
     def perform_destroy(self, instance):
         instance.is_active = False
@@ -165,6 +174,7 @@ class OrgMasterItemView(APIView):
         ).values_list("master_item_id", flat=True)
 
         available = MasterItem.objects.filter(
+            parent_company=request.org.parent_company,
             is_active=True,
         ).exclude(
             id__in=activated_master_ids,

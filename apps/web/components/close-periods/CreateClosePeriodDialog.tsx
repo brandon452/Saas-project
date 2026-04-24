@@ -25,11 +25,10 @@ function toDateInputValue(date: Date) {
 function getCurrentMonthDefaults() {
   const now = new Date()
   const start = new Date(now.getFullYear(), now.getMonth(), 1)
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
 
   return {
     startDate: toDateInputValue(start),
-    endDate: toDateInputValue(end),
+    endDate: toDateInputValue(now),
   }
 }
 
@@ -47,6 +46,7 @@ export function CreateClosePeriodDialog({
   onCreated,
 }: CreateClosePeriodDialogProps) {
   const { createPeriod } = useClosePeriodMutations(orgId)
+  const today = toDateInputValue(new Date())
   const defaultDates = getCurrentMonthDefaults()
 
   const [startDate, setStartDate] = useState(defaultDates.startDate)
@@ -100,6 +100,7 @@ export function CreateClosePeriodDialog({
                 id="cp-start-date"
                 type="date"
                 value={startDate}
+                max={today}
                 onChange={(e) => {
                   setStartDate(e.target.value)
                   setError("")
@@ -115,6 +116,7 @@ export function CreateClosePeriodDialog({
                 id="cp-end-date"
                 type="date"
                 value={endDate}
+                max={today}
                 onChange={(e) => {
                   setEndDate(e.target.value)
                   setError("")

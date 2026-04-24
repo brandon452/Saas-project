@@ -27,7 +27,8 @@ class PurchaseOrderNumberTests(TransactionTestCase):
         )
         self.supplier = Supplier.objects.for_org(self.acme).create(
             organization=self.acme,
-            name="Acme Supplier",
+            display_name="Acme Supplier",
+            code="SUP-ACME-001",
             created_by=self.user,
         )
         self.globex_branch = Branch.objects.for_org(self.globex).create(
@@ -37,7 +38,8 @@ class PurchaseOrderNumberTests(TransactionTestCase):
         )
         self.globex_supplier = Supplier.objects.for_org(self.globex).create(
             organization=self.globex,
-            name="Globex Supplier",
+            display_name="Globex Supplier",
+            code="SUP-GLOBEX-001",
             created_by=self.user,
         )
 
@@ -73,6 +75,42 @@ class PurchaseOrderNumberTests(TransactionTestCase):
         )
 
         self.assertEqual(generate_po_number(self.acme), "PO-0001")
+
+    def test_generate_po_number_handles_lexicographic_rollover(self):
+        PurchaseOrder.objects.for_org(self.acme).create(
+            organization=self.acme,
+            po_number="PO-9999",
+            supplier=self.supplier,
+            branch=self.branch,
+            created_by=self.user,
+        )
+        PurchaseOrder.objects.for_org(self.acme).create(
+            organization=self.acme,
+            po_number="PO-10000",
+            supplier=self.supplier,
+            branch=self.branch,
+            created_by=self.user,
+        )
+
+        self.assertEqual(generate_po_number(self.acme), "PO-10001")
+
+    def test_generate_po_number_ignores_malformed_when_valid_exists(self):
+        PurchaseOrder.objects.for_org(self.acme).create(
+            organization=self.acme,
+            po_number="BAD-VALUE",
+            supplier=self.supplier,
+            branch=self.branch,
+            created_by=self.user,
+        )
+        PurchaseOrder.objects.for_org(self.acme).create(
+            organization=self.acme,
+            po_number="PO-0010",
+            supplier=self.supplier,
+            branch=self.branch,
+            created_by=self.user,
+        )
+
+        self.assertEqual(generate_po_number(self.acme), "PO-0011")
 
 
 class PurchaseOrderApiTests(APITestCase):
@@ -124,18 +162,21 @@ class PurchaseOrderApiTests(APITestCase):
 
         self.supplier = Supplier.objects.for_org(self.acme).create(
             organization=self.acme,
-            name="Acme Supplier",
+            display_name="Acme Supplier",
+            code="SUP-ACME-001",
             created_by=self.owner,
         )
         self.inactive_supplier = Supplier.objects.for_org(self.acme).create(
             organization=self.acme,
-            name="Inactive Supplier",
+            display_name="Inactive Supplier",
+            code="SUP-ACME-002",
             is_active=False,
             created_by=self.owner,
         )
         self.other_supplier = Supplier.objects.for_org(self.globex).create(
             organization=self.globex,
-            name="Globex Supplier",
+            display_name="Globex Supplier",
+            code="SUP-GLOBEX-001",
         )
 
         self.item_a = self._create_org_item(self.acme, "Item A", "PO-A")
@@ -800,7 +841,10 @@ class PurchaseOrderApiTests(APITestCase):
             organization=self.acme, name="Branch Two", code="B2"
         )
         supplier2 = Supplier.objects.for_org(self.acme).create(
-            organization=self.acme, name="Supplier Two", created_by=self.owner
+            organization=self.acme,
+            display_name="Supplier Two",
+            code="SUP-ACME-003",
+            created_by=self.owner,
         )
         po_draft = PurchaseOrder.objects.for_org(self.acme).create(
             organization=self.acme, po_number="PO-0001",

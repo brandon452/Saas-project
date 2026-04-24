@@ -6,21 +6,37 @@ from django.db import models
 from django.db.models import Q
 
 from branches.models import Branch
-from tenancy.models import TenantModel
+from tenancy.models import ParentCompany, TenantModel, get_default_parent_company
 
 
 class MasterItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    parent_company = models.ForeignKey(
+        ParentCompany,
+        on_delete=models.PROTECT,
+        related_name="master_items",
+    )
     name = models.CharField(max_length=255)
-    sku = models.CharField(max_length=100, unique=True)
+    sku = models.CharField(max_length=100)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["parent_company", "sku"],
+                name="unique_master_item_sku_per_parent_company",
+            )
+        ]
 
     def __str__(self):
         return f"{self.sku} - {self.name}"
+
+    def save(self, *args, **kwargs):
+        if not self.parent_company_id:
+            self.parent_company = get_default_parent_company()
+        return super().save(*args, **kwargs)
 
 
 class OrgItem(TenantModel):

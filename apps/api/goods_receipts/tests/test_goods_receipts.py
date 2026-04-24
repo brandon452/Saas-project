@@ -61,12 +61,12 @@ class GoodsReceiptApiTests(APITestCase):
 
         self.supplier = Supplier.objects.for_org(self.acme).create(
             organization=self.acme,
-            name="Acme Supplier",
+            display_name="Acme Supplier",
             created_by=self.owner,
         )
         self.other_supplier = Supplier.objects.for_org(self.globex).create(
             organization=self.globex,
-            name="Globex Supplier",
+            display_name="Globex Supplier",
         )
 
         self.item_a = self._create_org_item(self.acme, "Item A", "GR-A")
@@ -283,6 +283,17 @@ class GoodsReceiptApiTests(APITestCase):
         )
         self.assertEqual(partial_allowed.status_code, 201)
 
+    def test_cancelled_under_lock_is_rejected_during_post(self):
+        self._auth(self.owner)
+
+        with patch("goods_receipts.services.PurchaseOrder.objects.select_for_update") as mocked_lock:
+            mocked_lock.return_value.get.return_value = self.cancelled_po
+            response = self._post(po=self.submitted_po)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("detail", response.data)
+        self.assertIn("status CANCELLED", str(response.data["detail"]))
+
     def test_line_validation_rules(self):
         self._auth(self.owner)
 
@@ -362,6 +373,57 @@ class GoodsReceiptApiTests(APITestCase):
             lines=[{"po_line": self.partial_line.id, "quantity_received": 1, "unit_cost": "-1.00"}],
         )
         self.assertEqual(negative_cost.status_code, 400)
+
+    def test_po_receipt_idempotency_reuses_existing_receipt(self):
+        self._auth(self.owner)
+
+        payload_key = "gr-po-idem-1"
+        first = self._post(
+            po=self.submitted_po,
+            idempotency_key=payload_key,
+            lines=[{"po_line": self.line_a.id, "quantity_received": 2}],
+        )
+        self.assertEqual(first.status_code, 201)
+
+        second = self._post(
+            po=self.submitted_po,
+            idempotency_key=payload_key,
+            # Intentionally different payload to verify key-level dedupe semantics.
+            lines=[{"po_line": self.line_a.id, "quantity_received": 1}],
+        )
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.data["id"], first.data["id"])
+
+        self.line_a.refresh_from_db()
+        self.assertEqual(self.line_a.received_quantity, 2)
+        self.assertEqual(
+            GoodsReceipt.objects.for_org(self.acme).filter(idempotency_key=payload_key).count(),
+            1,
+        )
+
+    def test_direct_receipt_idempotency_reuses_existing_receipt(self):
+        self._auth(self.owner)
+
+        payload_key = "gr-direct-idem-1"
+        first = self._post_direct(
+            idempotency_key=payload_key,
+            lines=[{"item": self.item_a.id, "quantity_received": 2, "unit_cost": "4.25"}],
+        )
+        self.assertEqual(first.status_code, 201)
+
+        second = self._post_direct(
+            idempotency_key=payload_key,
+            lines=[{"item": self.item_a.id, "quantity_received": 1, "unit_cost": "4.25"}],
+        )
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.data["id"], first.data["id"])
+
+        stock = StockOnHand.objects.for_org(self.acme).get(branch=self.branch, item=self.item_a)
+        self.assertEqual(stock.quantity, Decimal("2.0000"))
+        self.assertEqual(
+            GoodsReceipt.objects.for_org(self.acme).filter(idempotency_key=payload_key).count(),
+            1,
+        )
 
     def test_direct_receipt_create_access_rules(self):
         for user, expected_status in (
@@ -725,7 +787,7 @@ class GoodsReceiptConcurrencyTests(TransactionTestCase):
         )
         self.supplier = Supplier.objects.for_org(self.org).create(
             organization=self.org,
-            name="Concurrency Supplier",
+            display_name="Concurrency Supplier",
             created_by=self.user,
         )
 

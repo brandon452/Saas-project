@@ -31,7 +31,10 @@ class OrgListCreateView(APIView):
     def get(self, request):
         parent = get_parent_membership(request)
         if parent:
-            orgs = Organization.objects.filter(is_active=True).order_by("name")
+            orgs = Organization.objects.filter(
+                parent_company=parent.parent_company,
+                is_active=True,
+            ).order_by("name")
             return Response(OrganizationSerializer(orgs, many=True).data)
 
         org_ids = OrganizationMember.objects.filter(
@@ -53,7 +56,8 @@ class OrgListCreateView(APIView):
 
         serializer = OrgCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        org = serializer.save()
+        parent = get_parent_membership(request)
+        org = serializer.save(parent_company=parent.parent_company)
         return Response(OrganizationSerializer(org).data, status=status.HTTP_201_CREATED)
 
 
@@ -62,7 +66,8 @@ class OrgGovernanceView(APIView):
 
     def patch(self, request, org_id):
         try:
-            org = Organization.objects.get(pk=org_id)
+            parent = get_parent_membership(request)
+            org = Organization.objects.get(pk=org_id, parent_company=parent.parent_company)
         except Organization.DoesNotExist:
             return Response({"detail": "Organization not found."}, status=404)
 

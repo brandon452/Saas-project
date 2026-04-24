@@ -65,6 +65,7 @@ class GoodsReceiptSerializer(serializers.ModelSerializer):
             "branch",
             "supplier",
             "source_reference",
+            "idempotency_key",
             "received_by",
             "received_at",
             "notes",
@@ -75,6 +76,7 @@ class GoodsReceiptSerializer(serializers.ModelSerializer):
             "received_by",
             "received_at",
             "lines",
+            "idempotency_key",
         ]
 
 
@@ -105,7 +107,11 @@ class GoodsReceiptCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = GoodsReceipt
-        fields = ["purchase_order", "notes", "lines"]
+        fields = ["purchase_order", "notes", "idempotency_key", "lines"]
+
+    def validate_idempotency_key(self, value):
+        value = (value or "").strip()
+        return value or None
 
     def validate_purchase_order(self, value):
         request = self.context["request"]
@@ -197,7 +203,11 @@ class DirectReceiptCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = GoodsReceipt
-        fields = ["branch", "supplier", "source_reference", "notes", "lines"]
+        fields = ["branch", "supplier", "source_reference", "notes", "idempotency_key", "lines"]
+
+    def validate_idempotency_key(self, value):
+        value = (value or "").strip()
+        return value or None
 
     def validate_branch(self, value):
         request = self.context["request"]
