@@ -9,7 +9,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 from branches.models import Branch
 from inventory.models import BranchItem, MasterItem, OrgItem
 from inventory.services import record_stock_movement
-from tenancy.models import Organization, OrganizationMember
+from tenancy.models import Organization, OrganizationMember, ParentCompanyMember
 from tenancy.permissions import RolePolicyPermission, get_member_role
 
 
@@ -29,9 +29,25 @@ class RolePolicyTests(APITestCase):
         self.staff = User.objects.create_user(username="staff_user", password="Passw0rd!")
         self.outsider = User.objects.create_user(username="outsider_user", password="Passw0rd!")
         self.new_user = User.objects.create_user(username="new_member", password="Passw0rd!")
+        self.parent_admin = User.objects.create_user(username="parent_admin_user", password="Passw0rd!")
+        self.parent_viewer = User.objects.create_user(username="parent_viewer_user", password="Passw0rd!")
 
         self.acme = Organization.objects.create(name="Acme", slug="acme")
         self.globex = Organization.objects.create(name="Globex", slug="globex")
+        ParentCompanyMember.objects.create(
+            user=self.parent_admin,
+            parent_company=self.acme.parent_company,
+            role=ParentCompanyMember.PARENT_ADMIN,
+            is_active=True,
+            created_by=self.parent_admin,
+        )
+        ParentCompanyMember.objects.create(
+            user=self.parent_viewer,
+            parent_company=self.acme.parent_company,
+            role=ParentCompanyMember.PARENT_VIEWER,
+            is_active=True,
+            created_by=self.parent_admin,
+        )
 
         self.acme_branch = Branch.objects.for_org(self.acme).create(organization=self.acme, name="Main", code="MAIN")
         self.globex_branch = Branch.objects.for_org(self.globex).create(
@@ -103,7 +119,13 @@ class RolePolicyTests(APITestCase):
             self.assertEqual(delete_res.status_code, delete_status)
 
     def test_branch_role_matrix(self):
-        roles = [(self.owner, 201, 200), (self.admin, 201, 200), (self.staff, 403, 403)]
+        roles = [
+            (self.owner, 201, 200),
+            (self.admin, 201, 200),
+            (self.staff, 403, 403),
+            (self.parent_admin, 201, 200),
+            (self.parent_viewer, 403, 403),
+        ]
         for user, create_status, patch_status in roles:
             self._auth(user)
             list_res = self.client.get(f"/api/orgs/{self.acme.id}/branches/", HTTP_HOST=self._host("acme"))

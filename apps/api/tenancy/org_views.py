@@ -1,11 +1,12 @@
 from rest_framework import serializers, status
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Organization, OrganizationMember
-from .permissions import IsParentAdmin, get_parent_membership
-from .serializers import OrganizationSerializer
+from .permissions import IsOrgOwnerOrAdminOrParentAdmin, IsParentAdmin, get_parent_membership
+from .serializers import OrganizationSerializer, OrganizationSettingsSerializer
 
 
 class OrgCreateSerializer(serializers.ModelSerializer):
@@ -75,3 +76,30 @@ class OrgGovernanceView(APIView):
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()
         return Response(OrganizationSerializer(updated).data)
+
+
+class OrgSettingsView(APIView):
+    permission_classes = [IsAuthenticated, IsOrgOwnerOrAdminOrParentAdmin]
+
+    def initial(self, request, *args, **kwargs):
+        self._resolve_org(request, kwargs.get("org_id"))
+        super().initial(request, *args, **kwargs)
+
+    def _resolve_org(self, request, org_id):
+        try:
+            request.org = Organization.objects.select_related("parent_company").get(
+                pk=org_id,
+                is_active=True,
+            )
+        except Organization.DoesNotExist:
+            raise NotFound("Organization not found.")
+
+    def get(self, request, org_id):
+        serializer = OrganizationSettingsSerializer(request.org)
+        return Response(serializer.data)
+
+    def patch(self, request, org_id):
+        serializer = OrganizationSettingsSerializer(request.org, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        updated = serializer.save()
+        return Response(OrganizationSettingsSerializer(updated).data)

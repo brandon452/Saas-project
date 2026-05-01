@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 type PopoverContextValue = {
   open: boolean
   setOpen: (open: boolean) => void
+  rootRef: React.RefObject<HTMLDivElement>
 }
 
 const PopoverContext = React.createContext<PopoverContextValue | null>(null)
@@ -28,9 +29,11 @@ export function Popover({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
+  const rootRef = React.useRef<HTMLDivElement>(null)
+
   return (
-    <PopoverContext.Provider value={{ open, setOpen: onOpenChange }}>
-      <div className="relative">{children}</div>
+    <PopoverContext.Provider value={{ open, setOpen: onOpenChange, rootRef }}>
+      <div ref={rootRef} className="relative">{children}</div>
     </PopoverContext.Provider>
   )
 }
@@ -68,21 +71,21 @@ export function PopoverContent({
   align?: "start" | "center" | "end"
   className?: string
 }) {
-  const { open, setOpen } = usePopoverContext()
+  const { open, setOpen, rootRef } = usePopoverContext()
   const ref = React.useRef<HTMLDivElement | null>(null)
 
   React.useEffect(() => {
     if (!open) return
 
     function handlePointerDown(event: MouseEvent) {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
         setOpen(false)
       }
     }
 
     document.addEventListener("mousedown", handlePointerDown)
     return () => document.removeEventListener("mousedown", handlePointerDown)
-  }, [open, setOpen])
+  }, [open, rootRef, setOpen])
 
   if (!open) return null
 

@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { ChevronUp, LogOut } from "lucide-react"
+import { ChevronUp, LogOut, Network } from "lucide-react"
 
 import { OrgSwitcher } from "./OrgSwitcher"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -25,17 +25,16 @@ import {
   SidebarSeparator,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { getCsrfHeader } from "@/lib/csrf"
 import { useAuth } from "@/lib/hooks/useAuth"
+import { useLogout } from "@/lib/hooks/useLogout"
 import { useOrg } from "@/lib/hooks/useOrg"
 import { getNavGroups } from "@/lib/nav"
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? ""
-
 export function AppSidebar() {
   const { user } = useAuth()
+  const logout = useLogout()
   const { orgId, role, isParentUser } = useOrg()
-  const { collapsed } = useSidebar()
+  const { collapsed, setCollapsed } = useSidebar()
   const pathname = usePathname()
 
   const navGroups = getNavGroups(orgId)
@@ -48,14 +47,13 @@ export function AppSidebar() {
   }
 
   async function handleLogout() {
-    await fetch(`${API_BASE}/api/auth/logout/`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        ...getCsrfHeader(),
-      },
-    })
-    window.location.href = "/login"
+    logout.mutate()
+  }
+
+  function handleNavClick() {
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      setCollapsed(true)
+    }
   }
 
   const firstInitial = user?.first_name?.[0] ?? ""
@@ -73,6 +71,18 @@ export function AppSidebar() {
         </div>
         <SidebarSeparator />
         {!collapsed ? <OrgSwitcher /> : null}
+        {isParentUser ? (
+          <SidebarMenu className="mt-2">
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild tooltip="Parent Console">
+                <Link href="/parent/organizations" title={collapsed ? "Parent Console" : undefined} onClick={handleNavClick}>
+                  <Network className="h-4 w-4" />
+                  {!collapsed ? <span>Parent Console</span> : null}
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        ) : null}
       </SidebarHeader>
 
       <SidebarContent>
@@ -92,7 +102,7 @@ export function AppSidebar() {
                   return (
                     <SidebarMenuItem key={item.href}>
                       <SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
-                        <Link href={item.href} title={collapsed ? item.label : undefined}>
+                        <Link href={item.href} title={collapsed ? item.label : undefined} onClick={handleNavClick}>
                           <item.icon className="h-4 w-4" />
                           {!collapsed ? <span>{item.label}</span> : null}
                         </Link>
@@ -107,7 +117,6 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
-        <SidebarSeparator />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton className="w-full">
@@ -128,9 +137,9 @@ export function AppSidebar() {
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-56">
-            <DropdownMenuItem onClick={handleLogout} className="gap-2">
+            <DropdownMenuItem onClick={handleLogout} disabled={logout.isPending} className="gap-2">
               <LogOut className="h-4 w-4" />
-              Sign out
+              {logout.isPending ? "Signing out..." : "Sign out"}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

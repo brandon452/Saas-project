@@ -121,7 +121,7 @@ export default function OrgItemsPage() {
     [canEdit],
   )
 
-  if (orgItemsQuery.isLoading) {
+  if (orgItemsQuery.isLoading && !orgItemsQuery.data) {
     return <OrgItemsListSkeleton />
   }
 
@@ -206,7 +206,10 @@ export default function OrgItemsPage() {
       </div>
 
       <Card>
-        <CardContent className="p-0">
+        <CardContent
+          aria-busy={orgItemsQuery.isFetching}
+          className={["p-0 transition-opacity", orgItemsQuery.isFetching ? "opacity-70" : "opacity-100"].join(" ")}
+        >
           {items.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">{emptyMessage}</div>
           ) : (
@@ -266,7 +269,9 @@ export default function OrgItemsPage() {
       </Card>
 
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-muted-foreground">Total items: {count}</p>
+        <p className="text-sm text-muted-foreground">
+          {orgItemsQuery.isFetching ? "Updating items..." : `Total items: ${count}`}
+        </p>
         <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="ghost"

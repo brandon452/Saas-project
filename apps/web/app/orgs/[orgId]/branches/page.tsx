@@ -22,14 +22,15 @@ import { useOrg } from "@/lib/hooks/useOrg"
 import type { Branch } from "@/lib/types/branches"
 
 export default function BranchesPage() {
-  const { isLoading: authLoading } = useAuth()
+  const { user, isLoading: authLoading } = useAuth()
   const { orgId, role } = useOrg()
   const branchesQuery = useBranches(orgId)
 
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
 
-  const canManage = role === "OWNER" || role === "ADMIN"
+  const isParentAdmin = user?.parent_role === "PARENT_ADMIN"
+  const canManage = role === "OWNER" || role === "ADMIN" || isParentAdmin
   const branches = useMemo(() => branchesQuery.data ?? [], [branchesQuery.data])
   const errorMessage =
     branchesQuery.error instanceof Error ? branchesQuery.error.message : ""

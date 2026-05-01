@@ -28,5 +28,6 @@ export function useMasterItems(params: UseMasterItemsParams) {
       return apiRequest<MasterItemListResponse>(`parent/master-items/${query ? `?${query}` : ""}`)
     },
     enabled: !!user?.is_parent_member,
+    placeholderData: (previousData) => previousData,
   })
 }

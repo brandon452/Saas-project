@@ -25,7 +25,7 @@ from quick_sales.views import QuickSaleViewSet
 from reports.views import PurchaseCostTrendView, StockValuationView
 from suppliers.views import SupplierViewSet
 from tenancy.invitation_views import CreateParentMemberView, CreateUserView
-from tenancy.org_views import OrgGovernanceView, OrgListCreateView
+from tenancy.org_views import OrgGovernanceView, OrgListCreateView, OrgSettingsView
 from tenancy.parent_views import ParentMemberViewSet
 from tenancy.setup_views import FirstRunSetupView, OperatorParentCompanyView, SetupStatusView
 from tenancy.views import MemberSearchView, MemberViewSet
@@ -58,6 +58,7 @@ urlpatterns = [
     path("operator/parent-companies/", OperatorParentCompanyView.as_view(), name="operator-parent-companies"),
     path("orgs/", OrgListCreateView.as_view(), name="org-list"),
     path("orgs/<uuid:org_id>/governance/", OrgGovernanceView.as_view(), name="org-governance"),
+    path("orgs/<uuid:org_id>/settings/", OrgSettingsView.as_view(), name="org-settings"),
     path("orgs/<uuid:org_id>/network-branches/", NetworkBranchView.as_view(), name="network-branches"),
     path("orgs/<uuid:org_id>/master-items/", OrgMasterItemView.as_view(), name="org-master-items"),
     path("orgs/<uuid:org_id>/members/search/", MemberSearchView.as_view(), name="member-search"),

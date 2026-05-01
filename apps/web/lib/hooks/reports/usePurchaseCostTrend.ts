@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query"
 
 import { apiRequest } from "@/lib/api"
-import type { CostTrendPoint } from "@/lib/types/reports"
+import type { CostTrendResponse } from "@/lib/types/reports"
 
 interface UsePurchaseCostTrendParams {
   orgId: string
@@ -33,10 +33,11 @@ export function usePurchaseCostTrend(params: UsePurchaseCostTrendParams) {
       if (params.supplier) sp.set("supplier", params.supplier)
       if (params.branch) sp.set("branch", params.branch)
 
-      return apiRequest<CostTrendPoint[]>(
+      return apiRequest<CostTrendResponse>(
         `orgs/${params.orgId}/reports/purchase-cost-trend/?${sp.toString()}`,
       )
     },
     enabled: !!params.orgId && !!params.item,
+    placeholderData: (previousData) => previousData,
   })
 }

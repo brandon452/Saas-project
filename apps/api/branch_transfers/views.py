@@ -140,6 +140,11 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
             organization=self.request.org,
             to_organization=to_branch.organization,
             created_by=self.request.user,
+            status=(
+                BranchTransfer.DRAFT
+                if self.request.org.branch_transfer_approval_required
+                else BranchTransfer.APPROVED
+            ),
         )
 
         for line_data in lines_data:

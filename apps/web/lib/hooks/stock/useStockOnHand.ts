@@ -35,5 +35,6 @@ export function useStockOnHand(params: UseStockOnHandParams) {
       )
     },
     enabled: !!orgId,
+    placeholderData: (previousData) => previousData,
   })
 }

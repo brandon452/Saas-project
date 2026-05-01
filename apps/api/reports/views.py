@@ -3,7 +3,8 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models
-from django.db.models import OuterRef, Subquery
+from django.db.models import Case, Count, DecimalField, ExpressionWrapper, F, IntegerField, OuterRef, Subquery, Sum, Value, When
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import PageNumberPagination
@@ -71,35 +72,52 @@ class StockValuationView(APIView):
             "results": [],
         })
 
-    def _build_summary(self, rows):
-        """Compute totals over a list of row dicts."""
-        total_latest = Decimal("0")
-        total_average = Decimal("0")
-        has_latest = False
-        has_average = False
-        item_ids = set()
-        branch_ids = set()
-
-        for row in rows:
-            qty = row["quantity_on_hand"]
-            latest_cost = row["latest_unit_cost"]
-            avg_cost = row["average_unit_cost"]
-
-            if latest_cost is not None:
-                total_latest += (qty * latest_cost).quantize(self.Q2)
-                has_latest = True
-            if avg_cost is not None:
-                total_average += (qty * avg_cost).quantize(self.Q2)
-                has_average = True
-
-            item_ids.add(row["item_id"])
-            branch_ids.add(row["branch_id"])
-
+    def _live_summary(self, qs):
+        result = qs.aggregate(
+            total_latest=Sum(
+                ExpressionWrapper(
+                    F("quantity") * F("_latest_unit_cost"),
+                    output_field=DecimalField(max_digits=30, decimal_places=4),
+                )
+            ),
+            total_average=Sum(
+                ExpressionWrapper(
+                    F("quantity") * F("_average_unit_cost"),
+                    output_field=DecimalField(max_digits=30, decimal_places=4),
+                )
+            ),
+            item_count=Count("item_id", distinct=True),
+            branch_count=Count("branch_id", distinct=True),
+        )
         return {
-            "total_latest_valuation": total_latest if has_latest else None,
-            "total_average_valuation": total_average if has_average else None,
-            "item_count": len(item_ids),
-            "branch_count": len(branch_ids),
+            "total_latest_valuation": result["total_latest"].quantize(self.Q2) if result["total_latest"] else None,
+            "total_average_valuation": result["total_average"].quantize(self.Q2) if result["total_average"] else None,
+            "item_count": result["item_count"],
+            "branch_count": result["branch_count"],
+        }
+
+    def _snapshot_summary(self, qs):
+        result = qs.aggregate(
+            total_latest=Sum(
+                ExpressionWrapper(
+                    F("quantity_on_hand") * F("latest_unit_cost"),
+                    output_field=DecimalField(max_digits=30, decimal_places=4),
+                )
+            ),
+            total_average=Sum(
+                ExpressionWrapper(
+                    F("quantity_on_hand") * F("average_unit_cost"),
+                    output_field=DecimalField(max_digits=30, decimal_places=4),
+                )
+            ),
+            item_count=Count("item_id", distinct=True),
+            branch_count=Count("branch_id", distinct=True),
+        )
+        return {
+            "total_latest_valuation": result["total_latest"].quantize(self.Q2) if result["total_latest"] else None,
+            "total_average_valuation": result["total_average"].quantize(self.Q2) if result["total_average"] else None,
+            "item_count": result["item_count"],
+            "branch_count": result["branch_count"],
         }
 
     def _format_row(self, row):
@@ -156,6 +174,23 @@ class StockValuationView(APIView):
                 | models.Q(item__name__icontains=search)
             )
 
+        # Sort at DB level using the previous report semantics:
+        # rows with a latest valuation first, then highest latest valuation.
+        soh_qs = soh_qs.annotate(
+            _has_latest=Case(
+                When(_latest_unit_cost__isnull=True, then=Value(1)),
+                default=Value(0),
+                output_field=IntegerField(),
+            ),
+            _sort_val=ExpressionWrapper(
+                F("quantity") * Coalesce(F("_latest_unit_cost"), Value(Decimal("0"))),
+                output_field=DecimalField(max_digits=30, decimal_places=4),
+            )
+        ).order_by(
+            "_has_latest",
+            F("_sort_val").desc(),
+        )
+
         return soh_qs
 
     def _soh_to_row(self, soh):
@@ -189,6 +224,23 @@ class StockValuationView(APIView):
                 | models.Q(item__name__icontains=search)
             )
 
+        # Sort at DB level using the previous report semantics:
+        # rows with a latest valuation first, then highest latest valuation.
+        qs = qs.annotate(
+            _has_latest=Case(
+                When(latest_unit_cost__isnull=True, then=Value(1)),
+                default=Value(0),
+                output_field=IntegerField(),
+            ),
+            _sort_val=ExpressionWrapper(
+                F("quantity_on_hand") * Coalesce(F("latest_unit_cost"), Value(Decimal("0"))),
+                output_field=DecimalField(max_digits=30, decimal_places=4),
+            )
+        ).order_by(
+            "_has_latest",
+            F("_sort_val").desc(),
+        )
+
         return qs
 
     def _snapshot_to_row(self, snap):
@@ -203,24 +255,13 @@ class StockValuationView(APIView):
             "average_unit_cost": snap.average_unit_cost,
         }
 
-    def _paginate_and_respond(self, request, queryset, row_fn):
-        # Compute full-set summary before pagination
-        full_rows = [row_fn(obj) for obj in queryset]
-        if not full_rows:
+    def _paginate_and_respond(self, request, queryset, row_fn, summary_fn):
+        summary = summary_fn(queryset)
+        if summary["item_count"] == 0:
             return self._empty_response()
 
-        summary = self._build_summary(full_rows)
-
-        # Sort: items with a latest_valuation first, descending by value
-        full_rows.sort(
-            key=lambda r: (
-                (r["latest_unit_cost"] is None or r["quantity_on_hand"] == 0),
-                -((r["latest_unit_cost"] or Decimal("0")) * r["quantity_on_hand"]),
-            )
-        )
-
-        page = self.paginator.paginate_queryset(full_rows, request, view=self)
-        formatted = [self._format_row(r) for r in page]
+        page = self.paginator.paginate_queryset(queryset, request, view=self)
+        formatted = [self._format_row(row_fn(obj)) for obj in page]
         serialized = StockValuationRowSerializer(formatted, many=True).data
 
         paginated = self.paginator.get_paginated_response(serialized)
@@ -247,16 +288,20 @@ class StockValuationView(APIView):
                 request,
                 self._snapshot_queryset(request, period),
                 self._snapshot_to_row,
+                self._snapshot_summary,
             )
 
         return self._paginate_and_respond(
             request,
             self._live_queryset(request),
             self._soh_to_row,
+            self._live_summary,
         )
 
 
 class PurchaseCostTrendView(APIView):
+    MAX_POINTS = 500
+
     def get_permissions(self):
         if get_parent_membership(self.request):
             return [IsAuthenticated(), IsParentMember()]
@@ -322,7 +367,7 @@ class PurchaseCostTrendView(APIView):
                 "receipt__supplier",
                 "receipt__purchase_order__supplier",
             )
-            .order_by("receipt__received_at")
+            .order_by("receipt__received_at", "receipt_id", "id")
         )
 
         supplier_id = request.query_params.get("supplier")
@@ -335,6 +380,19 @@ class PurchaseCostTrendView(APIView):
         branch_id = request.query_params.get("branch")
         if branch_id:
             qs = qs.filter(receipt__branch_id=branch_id)
+
+        total_count = qs.count()
+        if total_count == 0:
+            return Response({
+                "results": [],
+                "truncated": False,
+                "total_count": 0,
+                "limit": self.MAX_POINTS,
+            })
+
+        truncated = total_count > self.MAX_POINTS
+        if truncated:
+            qs = qs[: self.MAX_POINTS]
 
         results = []
         for line in qs:
@@ -364,8 +422,10 @@ class PurchaseCostTrendView(APIView):
                 }
             )
 
-        if not results:
-            return Response([])
-
         serializer = CostTrendPointSerializer(results, many=True)
-        return Response(serializer.data)
+        return Response({
+            "results": serializer.data,
+            "truncated": truncated,
+            "total_count": total_count,
+            "limit": self.MAX_POINTS,
+        })

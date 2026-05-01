@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+import { setLogoutInProgress } from '@/lib/api'
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? ''
 
 export default function LoginPage() {
@@ -36,6 +38,7 @@ export default function LoginPage() {
         return
       }
 
+      setLogoutInProgress(false)
       router.push('/')
     } catch {
       setError('Network error. Please try again.')
@@ -45,7 +48,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main className='flex min-h-screen items-center justify-center bg-[#F9FAFB] px-4'>
+    <main className='flex min-h-dvh items-start justify-center bg-[#F9FAFB] px-4 py-10 sm:items-center sm:py-6'>
       <div className='w-full max-w-sm'>
         <div className='mb-8 text-center'>
           <h1 className='text-3xl font-bold tracking-tight text-[#111827]'>Symbiosis</h1>

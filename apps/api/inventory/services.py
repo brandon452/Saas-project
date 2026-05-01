@@ -1,13 +1,15 @@
 import logging
+from datetime import datetime, time
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from .models import (
     BranchItem, InventoryClosePeriod, InventoryCostState, InventoryCloseSnapshot,
-    StockLedger, StockOnHand, StockTake, StockTakeLine,
+    OrgItem, StockLedger, StockOnHand, StockTake, StockTakeLine,
 )
 
 logger = logging.getLogger(__name__)
@@ -18,16 +20,16 @@ def assert_inventory_period_open(org, effective_at):
     ts = effective_at or timezone.now()
     conflict = InventoryClosePeriod.objects.select_for_update().filter(
         organization=org,
-        status__in=[InventoryClosePeriod.CLOSING, InventoryClosePeriod.CLOSED],
         start_date__lte=ts.date(),
         end_date__gte=ts.date(),
     ).first()
     if conflict:
         if conflict.status == InventoryClosePeriod.CLOSING:
             raise ValidationError(
-                f"Period {conflict.start_date}–{conflict.end_date} is currently closing. Try again shortly."
+                f"Period {conflict.start_date}-{conflict.end_date} is currently closing. Try again shortly."
             )
-        raise ValidationError(f"Period {conflict.start_date}–{conflict.end_date} is closed.")
+        if conflict.status == InventoryClosePeriod.CLOSED:
+            raise ValidationError(f"Period {conflict.start_date}-{conflict.end_date} is closed.")
 
 
 @transaction.atomic
@@ -62,14 +64,6 @@ def record_stock_movement(
 
     # Step 1 — period check before any lock
     # Must be called BEFORE any StockOnHand locks to avoid deadlocks with close_period()
-    assert_inventory_period_open(org, occurred_at)
-
-    # Sign validation
-    if movement_type == StockLedger.MOVEMENT_RECEIPT and quantity <= 0:
-        raise ValidationError("RECEIPT quantity must be positive.")
-    if movement_type == StockLedger.MOVEMENT_ISSUE and quantity >= 0:
-        raise ValidationError("ISSUE quantity must be negative.")
-
     if idempotency_key is not None:
         existing = (
             StockLedger.objects.for_org(org)
@@ -79,6 +73,14 @@ def record_stock_movement(
         )
         if existing:
             return existing, False
+
+    assert_inventory_period_open(org, occurred_at)
+
+    # Sign validation
+    if movement_type == StockLedger.MOVEMENT_RECEIPT and quantity <= 0:
+        raise ValidationError("RECEIPT quantity must be positive.")
+    if movement_type == StockLedger.MOVEMENT_ISSUE and quantity >= 0:
+        raise ValidationError("ISSUE quantity must be negative.")
 
     # Step 2 — Lock StockOnHand
     stock_qs = StockOnHand.objects
@@ -94,10 +96,18 @@ def record_stock_movement(
             .first()
         )
         current_quantity = stock_on_hand.quantity if stock_on_hand else 0
-        if current_quantity + quantity < 0:
+        if current_quantity + quantity < 0 and not org.allow_negative_stock:
             raise ValidationError(
                 f"Insufficient stock. Available: {current_quantity}, requested: {abs(quantity)}."
             )
+        if stock_on_hand is None:
+            try:
+                with transaction.atomic():
+                    stock_on_hand = StockOnHand.objects.create(
+                        organization=org, branch=branch, item=item, quantity=0,
+                    )
+            except IntegrityError:
+                stock_on_hand = stock_qs.select_for_update().get(organization=org, branch=branch, item=item)
     else:
         try:
             stock_on_hand = stock_qs.select_for_update().get(organization=org, branch=branch, item=item)
@@ -445,59 +455,74 @@ def close_period(period, closed_by):
     period.status = InventoryClosePeriod.CLOSING
     period.save(update_fields=["status"])
 
-    # Step 4 — Lock all positive StockOnHand rows.
-    #   Zero-on-hand rows excluded — no value, no AVCO requirement.
-    #   Missing snapshot row = qty=0 for consumers.
-    on_hand_rows = list(
-        StockOnHand.objects.select_for_update()
-        .filter(organization=period.organization, quantity__gt=0)
-        .select_related("branch", "item")
+    # Step 4 - build period-end balances from the immutable ledger.
+    # Missing snapshot row = qty 0 for consumers.
+    cutoff = _period_end_cutoff(period.end_date)
+    balance_rows = list(
+        StockLedger.objects.for_org(period.organization)
+        .filter(occurred_at__lte=cutoff)
+        .values("branch_id", "item_id")
+        .annotate(
+            quantity_on_hand=Sum("quantity"),
+            average_valuation=Sum("value_delta"),
+        )
+        .filter(quantity_on_hand__gt=0)
     )
 
-    # Step 5 — Read InventoryCostState for locked (branch, item) pairs.
-    #   No separate lock needed — concurrent movements are serialized by their
-    #   locked StockOnHand rows. close_period() is read-only on InventoryCostState.
-    locked_pairs = [(r.branch_id, r.item_id) for r in on_hand_rows]
-    cost_map = {
-        (c.branch_id, c.item_id): c
-        for c in InventoryCostState.objects.filter(
-            organization=period.organization,
-            branch_id__in={p[0] for p in locked_pairs},
-            item_id__in={p[1] for p in locked_pairs},
+    # Step 5 - find the latest costed positive movement per branch/item.
+    branch_ids = {r["branch_id"] for r in balance_rows}
+    item_ids = {r["item_id"] for r in balance_rows}
+    latest_cost_map = {}
+    if balance_rows:
+        latest_rows = (
+            StockLedger.objects.for_org(period.organization)
+            .filter(
+                occurred_at__lte=cutoff,
+                branch_id__in=branch_ids,
+                item_id__in=item_ids,
+                movement_type=StockLedger.MOVEMENT_RECEIPT,
+                quantity__gt=0,
+                unit_cost__isnull=False,
+            )
+            .order_by("branch_id", "item_id", "-occurred_at", "-created_at")
+            .values("branch_id", "item_id", "unit_cost")
         )
-    }
+        for row in latest_rows:
+            latest_cost_map.setdefault((row["branch_id"], row["item_id"]), row["unit_cost"])
 
-    # Step 6 — Validate AVCO, surface up to 20 SKUs
-    missing = [
-        r for r in on_hand_rows
-        if not cost_map.get((r.branch_id, r.item_id))
-        or cost_map[(r.branch_id, r.item_id)].average_unit_cost is None
-    ]
+    # Step 6 - validate AVCO, surface up to 20 SKUs.
+    missing = [r for r in balance_rows if r["average_valuation"] is None]
     if missing:
+        sku_map = {
+            item.pk: item.sku
+            for item in OrgItem.objects.filter(pk__in=[r["item_id"] for r in missing])
+        }
         cap = 20
-        skus = ", ".join(r.item.sku for r in missing[:cap])
+        skus = ", ".join(str(sku_map.get(r["item_id"], r["item_id"])) for r in missing[:cap])
         suffix = f" (and {len(missing) - cap} more)" if len(missing) > cap else ""
         raise ValidationError(
             f"{len(missing)} item(s) have no AVCO. Correct before closing: {skus}{suffix}"
         )
 
-    # Step 7 — Write snapshots, all decimals quantized to 4dp
+    # Step 7 - write snapshots, all decimals quantized to 4dp.
     Q = Decimal("0.0001")
     snapshots = []
-    for r in on_hand_rows:
-        cs = cost_map[(r.branch_id, r.item_id)]
-        avg = cs.average_unit_cost.quantize(Q)
-        latest = cs.latest_unit_cost.quantize(Q) if cs.latest_unit_cost is not None else None
+    for r in balance_rows:
+        quantity = r["quantity_on_hand"].quantize(Q)
+        average_valuation = r["average_valuation"].quantize(Q)
+        avg = (average_valuation / quantity).quantize(Q)
+        latest_cost = latest_cost_map.get((r["branch_id"], r["item_id"]))
+        latest = latest_cost.quantize(Q) if latest_cost is not None else None
         snapshots.append(InventoryCloseSnapshot(
             period=period,
             organization=period.organization,
-            branch=r.branch,
-            item=r.item,
-            quantity_on_hand=r.quantity,
+            branch_id=r["branch_id"],
+            item_id=r["item_id"],
+            quantity_on_hand=quantity,
             average_unit_cost=avg,
             latest_unit_cost=latest,
-            average_valuation=(avg * r.quantity).quantize(Q),
-            latest_valuation=(latest * r.quantity).quantize(Q) if latest is not None else None,
+            average_valuation=average_valuation,
+            latest_valuation=(latest * quantity).quantize(Q) if latest is not None else None,
             valuation_basis="AVCO",
         ))
     # Replace any prior snapshots if this period was previously closed and reopened.
@@ -516,6 +541,13 @@ def close_period(period, closed_by):
         period.end_date,
         closed_by,
     )
+
+
+def _period_end_cutoff(end_date):
+    cutoff = datetime.combine(end_date, time.max)
+    if timezone.is_naive(cutoff):
+        cutoff = timezone.make_aware(cutoff, timezone.get_current_timezone())
+    return cutoff
 
 
 @transaction.atomic

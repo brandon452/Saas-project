@@ -73,7 +73,11 @@ export default function PurchaseOrdersPage() {
   const branchMap = new Map((branchesQuery.data ?? []).map((item) => [item.id, item.name]))
   const errorMessage = purchaseOrdersQuery.error instanceof Error ? purchaseOrdersQuery.error.message : ""
 
-  if (purchaseOrdersQuery.isLoading || suppliersQuery.isLoading || branchesQuery.isLoading) {
+  if (
+    (purchaseOrdersQuery.isLoading && !purchaseOrdersQuery.data) ||
+    suppliersQuery.isLoading ||
+    branchesQuery.isLoading
+  ) {
     return <ListSkeleton />
   }
 
@@ -143,7 +147,10 @@ export default function PurchaseOrdersPage() {
       />
 
       <Card>
-        <CardContent className="p-0">
+        <CardContent
+          aria-busy={purchaseOrdersQuery.isFetching}
+          className={["p-0 transition-opacity", purchaseOrdersQuery.isFetching ? "opacity-70" : "opacity-100"].join(" ")}
+        >
           {orders.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">
               No purchase orders found for the current filters.
@@ -184,7 +191,9 @@ export default function PurchaseOrdersPage() {
       </Card>
 
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-muted-foreground">Total purchase orders: {count}</p>
+        <p className="text-sm text-muted-foreground">
+          {purchaseOrdersQuery.isFetching ? "Updating purchase orders..." : `Total purchase orders: ${count}`}
+        </p>
         <div className="flex items-center gap-3">
           <Button variant="ghost" disabled={page <= 1} onClick={() => navigatePage(page - 1)}>
             Previous

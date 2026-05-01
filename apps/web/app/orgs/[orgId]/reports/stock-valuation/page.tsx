@@ -102,6 +102,7 @@ export default function StockValuationPage() {
   const branch = searchParams.get("branch") ?? ""
   const search = searchParams.get("search") ?? ""
   const periodId = searchParams.get("period_id") ?? ""
+  const page = Number.parseInt(searchParams.get("page") ?? "1", 10) || 1
 
   const [searchDraft, setSearchDraft] = useState(search)
 
@@ -120,6 +121,7 @@ export default function StockValuationPage() {
       } else {
         params.delete("search")
       }
+      params.set("page", "1")
       const qs = params.toString()
       router.replace(qs ? `${pathname}?${qs}` : pathname)
     }, 300)
@@ -130,6 +132,9 @@ export default function StockValuationPage() {
     const params = new URLSearchParams(searchParams.toString())
     if (value) params.set(key, value)
     else params.delete(key)
+    if (key !== "page") {
+      params.set("page", "1")
+    }
     const qs = params.toString()
     router.replace(qs ? `${pathname}?${qs}` : pathname)
   }
@@ -152,6 +157,7 @@ export default function StockValuationPage() {
     branch: branch || undefined,
     search: search || undefined,
     periodId: periodId || undefined,
+    page,
   })
 
   if (!canView) {
@@ -205,6 +211,10 @@ export default function StockValuationPage() {
 
   const summary = reportQuery.data?.summary
   const results = reportQuery.data?.results ?? []
+  const count = reportQuery.data?.count ?? 0
+  const pageSize = 50
+  const firstRow = count === 0 ? 0 : (page - 1) * pageSize + 1
+  const lastRow = count === 0 ? 0 : Math.min((page - 1) * pageSize + results.length, count)
 
   const csvFilename = selectedPeriod
     ? `stock-valuation-${selectedPeriod.start_date}-to-${selectedPeriod.end_date}.csv`
@@ -310,8 +320,9 @@ export default function StockValuationPage() {
               <div className="space-y-1">
                 <CardTitle>Stock Valuation</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  {results.length} item{results.length === 1 ? "" : "s"} with stock in the current
-                  filter.
+                  {count > 0
+                    ? `Showing ${firstRow}-${lastRow} of ${count} item${count === 1 ? "" : "s"} with stock.`
+                    : "No items with stock in the current filter."}
                 </p>
               </div>
               {results.length > 0 && (
@@ -357,6 +368,33 @@ export default function StockValuationPage() {
               )}
             </CardContent>
           </Card>
+
+          <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-muted-foreground">
+              {reportQuery.isFetching
+                ? "Updating stock valuation..."
+                : count > 0
+                  ? `Showing ${firstRow}-${lastRow} of ${count}`
+                  : "No rows"}
+            </p>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                disabled={page <= 1 || reportQuery.isFetching}
+                onClick={() => updateParam("page", String(Math.max(1, page - 1)))}
+              >
+                Previous
+              </Button>
+              <span className="text-sm font-medium">Page {page}</span>
+              <Button
+                variant="ghost"
+                disabled={!reportQuery.data?.next || reportQuery.isFetching}
+                onClick={() => updateParam("page", String(page + 1))}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
         </>
       )}
     </div>

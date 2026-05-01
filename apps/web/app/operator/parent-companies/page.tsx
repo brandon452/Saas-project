@@ -118,6 +118,15 @@ export default function OperatorParentCompaniesPage() {
             <h1 className="text-2xl font-semibold tracking-tight">Parent Companies</h1>
             <p className="mt-2 text-sm text-muted-foreground">Create and review top-level customer groups.</p>
           </div>
+          {user.is_parent_member ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => router.push("/parent/organizations")}
+            >
+              Go to Parent Workspace
+            </Button>
+          ) : null}
           <div className="overflow-hidden rounded-lg border border-border bg-card">
             <table className="w-full text-left text-sm">
               <thead className="border-b border-border bg-muted/50 text-muted-foreground">

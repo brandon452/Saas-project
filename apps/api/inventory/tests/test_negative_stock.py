@@ -88,6 +88,20 @@ class NegativeStockServiceTests(NegativeStockTestDataMixin, TestCase):
             Decimal("5.0000"),
         )
 
+    def test_stock_out_exceeding_available_succeeds_when_org_allows_negative_stock(self):
+        self._record("5.0000", movement_type="RECEIPT")
+        self.org.allow_negative_stock = True
+        self.org.save(update_fields=["allow_negative_stock"])
+
+        ledger, created = self._record("-6.0000")
+
+        self.assertTrue(created)
+        self.assertEqual(ledger.quantity, Decimal("-6.0000"))
+        self.assertEqual(
+            StockOnHand.objects.for_org(self.org).get(branch=self.branch, item=self.item).quantity,
+            Decimal("-1.0000"),
+        )
+
     def test_stock_out_without_stock_on_hand_row_is_rejected(self):
         with self.assertRaisesMessage(
             ValidationError,

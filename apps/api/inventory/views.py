@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import BooleanField, Case, Count, F, IntegerField, OuterRef, Q, Subquery, Value, When
@@ -64,6 +66,14 @@ from .services import (
     start_stock_take,
     submit_stock_take,
 )
+
+
+def validate_uuid_query_param(value, field_name):
+    try:
+        UUID(str(value))
+    except (TypeError, ValueError):
+        raise DRFValidationError({field_name: ["Enter a valid UUID."]})
+    return value
 
 
 @extend_schema_view(
@@ -424,10 +434,12 @@ class StockOnHandViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedMix
 
         branch_id = self.request.query_params.get("branch")
         if branch_id:
+            validate_uuid_query_param(branch_id, "branch")
             qs = qs.filter(branch_id=branch_id)
 
         item_id = self.request.query_params.get("item")
         if item_id:
+            validate_uuid_query_param(item_id, "item")
             qs = qs.filter(item_id=item_id)
 
         is_active = self.request.query_params.get("is_active")
@@ -486,10 +498,12 @@ class StockMovementViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedM
 
         branch_id = self.request.query_params.get("branch")
         if branch_id:
+            validate_uuid_query_param(branch_id, "branch")
             qs = qs.filter(branch_id=branch_id)
 
         item_id = self.request.query_params.get("item")
         if item_id:
+            validate_uuid_query_param(item_id, "item")
             qs = qs.filter(item_id=item_id)
 
         movement_type = self.request.query_params.get("movement_type")

@@ -22,13 +22,14 @@ function toDateInputValue(date: Date) {
   return localDate.toISOString().slice(0, 10)
 }
 
-function getCurrentMonthDefaults() {
+function getPreviousMonthDefaults() {
   const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth(), 1)
+  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const end = new Date(now.getFullYear(), now.getMonth(), 0)
 
   return {
     startDate: toDateInputValue(start),
-    endDate: toDateInputValue(now),
+    endDate: toDateInputValue(end),
   }
 }
 
@@ -45,27 +46,30 @@ export function CreateClosePeriodDialog({
   onOpenChange,
   onCreated,
 }: CreateClosePeriodDialogProps) {
-  const { createPeriod } = useClosePeriodMutations(orgId)
+  const { createPeriod, closePeriod } = useClosePeriodMutations(orgId)
   const today = toDateInputValue(new Date())
-  const defaultDates = getCurrentMonthDefaults()
+  const defaultDates = getPreviousMonthDefaults()
 
   const [startDate, setStartDate] = useState(defaultDates.startDate)
   const [endDate, setEndDate] = useState(defaultDates.endDate)
   const [notes, setNotes] = useState("")
+  const [confirmed, setConfirmed] = useState(false)
   const [error, setError] = useState("")
 
   useEffect(() => {
     if (!open) {
-      const nextDefaults = getCurrentMonthDefaults()
+      const nextDefaults = getPreviousMonthDefaults()
       setStartDate(nextDefaults.startDate)
       setEndDate(nextDefaults.endDate)
       setNotes("")
+      setConfirmed(false)
       setError("")
     }
   }, [open])
 
   const dateRangeInvalid = !!startDate && !!endDate && endDate < startDate
-  const canSubmit = !!startDate && !!endDate && !dateRangeInvalid && !createPeriod.isPending
+  const isPending = createPeriod.isPending || closePeriod.isPending
+  const canSubmit = !!startDate && !!endDate && confirmed && !dateRangeInvalid && !isPending
 
   async function handleSubmit() {
     if (!canSubmit) return
@@ -76,9 +80,10 @@ export function CreateClosePeriodDialog({
         end_date: endDate,
         notes,
       })
-      onCreated(result)
+      const closed = await closePeriod.mutateAsync(result.id)
+      onCreated(closed)
     } catch (err) {
-      setError(getApiErrorMessage(err, "Could not create period. Check the dates and try again."))
+      setError(getApiErrorMessage(err, "Could not close period. Check the dates, cost data, and try again."))
     }
   }
 
@@ -86,9 +91,9 @@ export function CreateClosePeriodDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Create Close Period</DialogTitle>
+          <DialogTitle>Close Period</DialogTitle>
           <DialogDescription>
-            Define a date range to manage as a closed inventory period.
+            Closing this period locks inventory movements within the selected date range and creates a valuation snapshot.
           </DialogDescription>
         </DialogHeader>
 
@@ -105,7 +110,7 @@ export function CreateClosePeriodDialog({
                   setStartDate(e.target.value)
                   setError("")
                 }}
-                disabled={createPeriod.isPending}
+                disabled={isPending}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none disabled:opacity-50"
               />
             </div>
@@ -121,7 +126,7 @@ export function CreateClosePeriodDialog({
                   setEndDate(e.target.value)
                   setError("")
                 }}
-                disabled={createPeriod.isPending}
+                disabled={isPending}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none disabled:opacity-50"
               />
             </div>
@@ -138,10 +143,23 @@ export function CreateClosePeriodDialog({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Optional notes about this period"
-              disabled={createPeriod.isPending}
+              disabled={isPending}
               rows={3}
             />
           </div>
+
+          <label className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+            <input
+              type="checkbox"
+              checked={confirmed}
+              onChange={(event) => setConfirmed(event.target.checked)}
+              disabled={isPending}
+              className="mt-1"
+            />
+            <span>
+              I understand this will lock inventory movements for the selected date range and create the period valuation snapshot.
+            </span>
+          </label>
 
           {error ? (
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -155,12 +173,12 @@ export function CreateClosePeriodDialog({
             type="button"
             variant="outline"
             onClick={() => onOpenChange(false)}
-            disabled={createPeriod.isPending}
+            disabled={isPending}
           >
             Cancel
           </Button>
           <Button onClick={handleSubmit} disabled={!canSubmit}>
-            {createPeriod.isPending ? "Creating..." : "Create Period"}
+            {isPending ? "Closing..." : "Close Period"}
           </Button>
         </DialogFooter>
       </DialogContent>

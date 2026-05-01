@@ -63,16 +63,19 @@ class PurchaseCostTrendApiTests(APITestCase):
         self.supplier_a = Supplier.objects.for_org(self.acme).create(
             organization=self.acme,
             display_name="Acme Supplier A",
+            code="TST-A",
             created_by=self.owner,
         )
         self.supplier_b = Supplier.objects.for_org(self.acme).create(
             organization=self.acme,
             display_name="Acme Supplier B",
+            code="TST-B",
             created_by=self.owner,
         )
         self.globex_supplier = Supplier.objects.for_org(self.globex).create(
             organization=self.globex,
             display_name="Globex Supplier",
+            code="GLO-S",
         )
 
         self.item = self._create_org_item(self.acme, "Tracked Item", "TREND-ITEM")
@@ -291,8 +294,14 @@ class PurchaseCostTrendApiTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIsInstance(response.data, list)
-        self.assertEqual(len(response.data), 3)
+        self.assertIn("results", response.data)
+        self.assertIs(response.data["truncated"], False)
+        self.assertEqual(response.data["total_count"], 3)
+        self.assertEqual(response.data["limit"], 500)
+
+        results = response.data["results"]
+        self.assertIsInstance(results, list)
+        self.assertEqual(len(results), 3)
 
         expected_keys = {
             "date",
@@ -305,12 +314,12 @@ class PurchaseCostTrendApiTests(APITestCase):
             "receipt_id",
             "receipt_type",
         }
-        self.assertEqual(set(response.data[0].keys()), expected_keys)
+        self.assertEqual(set(results[0].keys()), expected_keys)
 
-        dates = [row["date"] for row in response.data]
+        dates = [row["date"] for row in results]
         self.assertEqual(dates, sorted(dates))
 
-        receipt_map = {row["receipt_id"]: row for row in response.data}
+        receipt_map = {row["receipt_id"]: row for row in results}
         po_row = receipt_map[str(self.po_receipt.id)]
         direct_row = receipt_map[str(self.direct_receipt.id)]
         boundary_row = receipt_map[str(self.boundary_receipt.id)]
@@ -329,7 +338,7 @@ class PurchaseCostTrendApiTests(APITestCase):
 
         self.assertEqual(boundary_row["receipt_id"], str(self.boundary_receipt.id))
 
-        returned_ids = {row["receipt_id"] for row in response.data}
+        returned_ids = {row["receipt_id"] for row in results}
         self.assertNotIn(str(self.none_cost_receipt.id), returned_ids)
         self.assertNotIn(str(self.outside_range_receipt.id), returned_ids)
         self.assertNotIn(str(self.other_item_receipt.id), returned_ids)
@@ -341,7 +350,10 @@ class PurchaseCostTrendApiTests(APITestCase):
             HTTP_HOST=self._host(),
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data, [])
+        self.assertEqual(response.data["results"], [])
+        self.assertIs(response.data["truncated"], False)
+        self.assertEqual(response.data["total_count"], 0)
+        self.assertEqual(response.data["limit"], 500)
 
     def test_default_date_range_is_last_365_days(self):
         self._auth(self.owner)
@@ -351,7 +363,7 @@ class PurchaseCostTrendApiTests(APITestCase):
         )
         self.assertEqual(response.status_code, 200)
 
-        receipt_ids = [row["receipt_id"] for row in response.data]
+        receipt_ids = [row["receipt_id"] for row in response.data["results"]]
         self.assertIn(str(self.boundary_receipt.id), receipt_ids)
         self.assertNotIn(str(self.outside_range_receipt.id), receipt_ids)
 
@@ -363,7 +375,7 @@ class PurchaseCostTrendApiTests(APITestCase):
             HTTP_HOST=self._host(),
         )
         self.assertEqual(po_response.status_code, 200)
-        self.assertEqual([row["receipt_id"] for row in po_response.data], [str(self.po_receipt.id)])
+        self.assertEqual([row["receipt_id"] for row in po_response.data["results"]], [str(self.po_receipt.id)])
 
         direct_response = self.client.get(
             f"{self._url()}?item={self.item.id}&supplier={self.supplier_b.id}",
@@ -371,7 +383,7 @@ class PurchaseCostTrendApiTests(APITestCase):
         )
         self.assertEqual(direct_response.status_code, 200)
         self.assertEqual(
-            [row["receipt_id"] for row in direct_response.data],
+            [row["receipt_id"] for row in direct_response.data["results"]],
             [str(self.boundary_receipt.id), str(self.direct_receipt.id)],
         )
 
@@ -384,7 +396,7 @@ class PurchaseCostTrendApiTests(APITestCase):
         )
         self.assertEqual(branch_a_response.status_code, 200)
         self.assertEqual(
-            [row["receipt_id"] for row in branch_a_response.data],
+            [row["receipt_id"] for row in branch_a_response.data["results"]],
             [str(self.boundary_receipt.id), str(self.po_receipt.id)],
         )
 
@@ -393,7 +405,7 @@ class PurchaseCostTrendApiTests(APITestCase):
             HTTP_HOST=self._host(),
         )
         self.assertEqual(branch_b_response.status_code, 200)
-        self.assertEqual([row["receipt_id"] for row in branch_b_response.data], [str(self.direct_receipt.id)])
+        self.assertEqual([row["receipt_id"] for row in branch_b_response.data["results"]], [str(self.direct_receipt.id)])
 
     def test_explicit_date_filters_narrow_results(self):
         self._auth(self.owner)
@@ -405,4 +417,4 @@ class PurchaseCostTrendApiTests(APITestCase):
             HTTP_HOST=self._host(),
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual([row["receipt_id"] for row in response.data], [str(self.direct_receipt.id)])
+        self.assertEqual([row["receipt_id"] for row in response.data["results"]], [str(self.direct_receipt.id)])

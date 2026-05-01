@@ -40,6 +40,10 @@ function getMovementBadgeVariant(movementType: string): "default" | "secondary" 
   }
 }
 
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
 export default function StockMovementsPage() {
   const { orgId } = useOrg()
   const pathname = usePathname()
@@ -55,9 +59,10 @@ export default function StockMovementsPage() {
   const page = searchParams.get("page") ?? "1"
 
   const hasInvalidDateRange = !!fromDate && !!toDate && fromDate > toDate
+  const hasInvalidItemId = !!item && !isUuid(item)
 
   const stockMovementsQuery = useStockMovements({
-    orgId: hasInvalidDateRange ? "" : orgId,
+    orgId: hasInvalidDateRange || hasInvalidItemId ? "" : orgId,
     branch: branch || undefined,
     item: item || undefined,
     movement_type: movementType || undefined,
@@ -260,6 +265,12 @@ export default function StockMovementsPage() {
         {hasInvalidDateRange ? (
           <div className="col-span-full">
             <p className="text-sm text-red-600">From date must be on or before to date.</p>
+          </div>
+        ) : null}
+
+        {hasInvalidItemId ? (
+          <div className="col-span-full">
+            <p className="text-sm text-red-600">Item must be a valid UUID.</p>
           </div>
         ) : null}
       </div>

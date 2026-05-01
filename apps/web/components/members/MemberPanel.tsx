@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 
 import { useQueryClient } from "@tanstack/react-query"
+import { ArrowLeft, X } from "lucide-react"
 
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog"
 import { Badge } from "@/components/ui/badge"
@@ -177,6 +178,28 @@ export function MemberPanel({
           {member ? (
             <div className="space-y-6">
               <SheetHeader>
+                <div className="flex items-start justify-between gap-3">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="-ml-2 gap-2 sm:hidden"
+                    onClick={onClose}
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    Users
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="-mr-2 ml-auto hidden h-8 w-8 p-0 sm:inline-flex"
+                    onClick={onClose}
+                    aria-label="Close user details"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
                 <SheetTitle>{fullName}</SheetTitle>
                 <SheetDescription className="space-y-3">
                   <span className="block">{member.user.email}</span>

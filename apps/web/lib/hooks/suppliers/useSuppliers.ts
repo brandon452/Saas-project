@@ -29,5 +29,6 @@ export function useSuppliers({ orgId, page = 1, search, isActive }: UseSuppliers
     },
     enabled: !!orgId,
     staleTime: 30 * 1000,
+    placeholderData: (previousData) => previousData,
   })
 }

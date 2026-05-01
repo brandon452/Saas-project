@@ -23,5 +23,6 @@ export function useBranchTransfers(params: {
       )
     },
     enabled: !!params.orgId,
+    placeholderData: (previousData) => previousData,
   })
 }

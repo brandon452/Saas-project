@@ -143,7 +143,7 @@ export default function ClosePeriodsPage() {
           </p>
         </div>
         {canWrite ? (
-          <Button onClick={() => setShowCreate(true)}>Create Period</Button>
+          <Button onClick={() => setShowCreate(true)}>Close Period</Button>
         ) : null}
       </div>
 

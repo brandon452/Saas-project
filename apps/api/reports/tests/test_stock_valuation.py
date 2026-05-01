@@ -149,6 +149,16 @@ class StockValuationApiTests(APITestCase):
         self.assertIsNone(null_row["average_unit_cost"])
         self.assertIsNone(null_row["latest_unit_cost"])
 
+    def test_live_valuation_orders_by_total_latest_value_not_unit_cost(self):
+        self._auth(self.owner)
+
+        response = self.client.get(self._url())
+
+        self.assertEqual(response.status_code, 200)
+        item_ids = [str(row["item_id"]) for row in response.data["results"]]
+        self.assertLess(item_ids.index(str(self.item_a.id)), item_ids.index(str(self.item_b.id)))
+        self.assertLess(item_ids.index(str(self.item_b.id)), item_ids.index(str(self.item_null.id)))
+
     def test_closed_period_returns_authoritative_snapshot(self):
         self._auth(self.owner)
         response = self.client.get(f"{self._url()}?period_id={self.closed_period.id}")

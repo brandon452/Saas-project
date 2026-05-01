@@ -112,6 +112,23 @@ class PurchaseOrderNumberTests(TransactionTestCase):
 
         self.assertEqual(generate_po_number(self.acme), "PO-0011")
 
+    def test_generate_po_number_uses_org_prefix_and_next_number_floor(self):
+        self.acme.purchase_order_prefix = "REQ"
+        self.acme.purchase_order_next_number = 42
+        self.acme.save(update_fields=["purchase_order_prefix", "purchase_order_next_number"])
+
+        self.assertEqual(generate_po_number(self.acme), "REQ-0042")
+
+        PurchaseOrder.objects.for_org(self.acme).create(
+            organization=self.acme,
+            po_number="REQ-0045",
+            supplier=self.supplier,
+            branch=self.branch,
+            created_by=self.user,
+        )
+
+        self.assertEqual(generate_po_number(self.acme), "REQ-0046")
+
 
 class PurchaseOrderApiTests(APITestCase):
     def _create_org_item(self, organization, name, sku, *, item_name=""):

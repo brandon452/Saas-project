@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from branches.models import Branch
 
@@ -15,6 +16,57 @@ class OrganizationSerializer(serializers.ModelSerializer):
         model = Organization
         fields = ["id", "name", "slug", "parent_company", "parent_company_name"]
         read_only_fields = ["id", "name", "slug", "parent_company", "parent_company_name"]
+
+
+class OrganizationSettingsSerializer(serializers.ModelSerializer):
+    parent_company_name = serializers.CharField(source="parent_company.name", read_only=True)
+
+    class Meta:
+        model = Organization
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "parent_company",
+            "parent_company_name",
+            "is_active",
+            "created_at",
+            "default_currency",
+            "default_timezone",
+            "allow_negative_stock",
+            "purchase_order_prefix",
+            "purchase_order_next_number",
+            "branch_transfer_approval_required",
+            "stock_take_approval_required",
+        ]
+        read_only_fields = ["id", "slug", "parent_company", "parent_company_name", "is_active", "created_at"]
+
+    def validate_default_currency(self, value):
+        value = value.strip().upper()
+        if len(value) != 3 or not value.isalpha():
+            raise serializers.ValidationError("Currency must be a three-letter ISO code.")
+        return value
+
+    def validate_default_timezone(self, value):
+        value = value.strip()
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError:
+            raise serializers.ValidationError("Enter a valid IANA timezone, such as UTC or Asia/Singapore.")
+        return value
+
+    def validate_purchase_order_prefix(self, value):
+        value = value.strip().upper()
+        if not value:
+            raise serializers.ValidationError("Purchase order prefix is required.")
+        if not value.replace("-", "").isalnum():
+            raise serializers.ValidationError("Use only letters, numbers, and hyphens.")
+        return value
+
+    def validate_purchase_order_next_number(self, value):
+        if value < 1:
+            raise serializers.ValidationError("Next number must be at least 1.")
+        return value
 
 
 class ParentCompanySerializer(serializers.ModelSerializer):

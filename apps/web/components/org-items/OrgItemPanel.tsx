@@ -168,7 +168,7 @@ export function OrgItemPanel({
                       id="org-item-name-override"
                       value={nameOverride}
                       onChange={(event) => setNameOverride(event.target.value)}
-                      placeholder="Use master item name"
+                      placeholder="Use global catalog name"
                       disabled={controlsDisabled || !item.is_active}
                     />
                   </div>

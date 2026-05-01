@@ -20,6 +20,9 @@ export interface StockValuationRow {
 
 export interface StockValuationResponse {
   summary: StockValuationSummary
+  count: number
+  next: string | null
+  previous: string | null
   results: StockValuationRow[]
 }
 
@@ -33,4 +36,11 @@ export interface CostTrendPoint {
   branch_name: string
   receipt_id: string
   receipt_type: "PO_RECEIPT" | "DIRECT_RECEIPT"
+}
+
+export interface CostTrendResponse {
+  results: CostTrendPoint[]
+  truncated: boolean
+  total_count: number
+  limit: number
 }

@@ -81,7 +81,7 @@ export function ActivateItemDialog({
 
   async function handleSubmit() {
     if (!selectedId) {
-      setError("Select a master item to activate.")
+      setError("Select a global catalog item to activate.")
       return
     }
 
@@ -117,7 +117,7 @@ export function ActivateItemDialog({
         <DialogHeader>
           <DialogTitle>Activate Item</DialogTitle>
           <DialogDescription>
-            Choose a master item to add to this organisation&apos;s catalog.
+            Choose a global catalog item to add to this organization&apos;s local item list.
           </DialogDescription>
         </DialogHeader>
 
@@ -134,13 +134,13 @@ export function ActivateItemDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>Available master items</Label>
+            <Label>Available global catalog items</Label>
             <div className="max-h-72 space-y-2 overflow-y-auto rounded-xl border border-border p-2">
               {availableItemsQuery.isLoading ? (
                 <div className="p-4 text-sm text-muted-foreground">Loading available items...</div>
               ) : showBaseEmptyState ? (
                 <div className="p-4 text-sm text-muted-foreground">
-                  All master items have already been activated
+                  All global catalog items have already been activated
                 </div>
               ) : showFilteredEmptyState ? (
                 <div className="p-4 text-sm text-muted-foreground">No items match your search</div>
@@ -177,7 +177,7 @@ export function ActivateItemDialog({
                 id="activate-item-override"
                 value={nameOverride}
                 onChange={(event) => setNameOverride(event.target.value)}
-                placeholder="Leave blank to use master item name"
+                placeholder="Leave blank to use the global catalog name"
                 disabled={activateItem.isPending}
               />
             </div>

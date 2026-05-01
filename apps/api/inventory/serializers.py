@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework import serializers
 
 from branches.models import Branch
@@ -649,6 +650,8 @@ class InventoryClosePeriodCreateSerializer(serializers.ModelSerializer):
     def validate(self, data):
         if data["start_date"] > data["end_date"]:
             raise serializers.ValidationError("start_date must be on or before end_date.")
+        if data["end_date"] > timezone.now().date():
+            raise serializers.ValidationError("end_date cannot be in the future.")
         org = self.context["request"].org
         overlap = InventoryClosePeriod.objects.filter(
             organization=org,

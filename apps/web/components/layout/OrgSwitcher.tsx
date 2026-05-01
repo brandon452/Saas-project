@@ -32,18 +32,26 @@ export function OrgSwitcher() {
   }, [orgs, query])
 
   function switchOrg(newOrgId: string) {
-    setOpen(false)
+    handleOpenChange(false)
     router.push(`/orgs/${newOrgId}/dashboard`)
   }
 
+  function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen)
+    if (!nextOpen) {
+      setQuery("")
+    }
+  }
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
           role="combobox"
           aria-expanded={open}
           className="w-full justify-between px-2 font-medium"
+          onMouseDown={(event) => event.stopPropagation()}
         >
           <div className="flex min-w-0 items-center gap-2">
             <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />

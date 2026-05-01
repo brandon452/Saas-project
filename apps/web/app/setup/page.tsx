@@ -79,7 +79,7 @@ export default function SetupPage() {
         setError(getErrorMessage(data, "Setup failed."))
         return
       }
-      router.replace("/parent/master-items")
+      router.replace("/parent/organizations")
     } catch {
       setError("Network error. Please try again.")
     } finally {
@@ -88,12 +88,12 @@ export default function SetupPage() {
   }
 
   if (setupRequired === null) {
-    return <main className="min-h-screen bg-background" />
+    return <main className="min-h-dvh bg-background" />
   }
 
   if (!setupRequired) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-background px-4">
+      <main className="flex min-h-dvh items-start justify-center bg-background px-4 py-10 sm:items-center sm:py-6">
         <section className="w-full max-w-md space-y-4 rounded-lg border border-border bg-card p-6 shadow-sm">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Setup Complete</h1>
@@ -106,7 +106,7 @@ export default function SetupPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
+    <main className="flex min-h-dvh items-start justify-center bg-background px-4 py-10 sm:items-center">
       <section className="w-full max-w-2xl rounded-lg border border-border bg-card p-6 shadow-sm">
         <div className="mb-6">
           <h1 className="text-2xl font-semibold tracking-tight">First-Run Setup</h1>

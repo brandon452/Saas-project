@@ -239,7 +239,20 @@ class IsOrgOperationalUser(BasePermission):
         if request.method in self.SAFE_METHODS:
             return True
 
-        return get_parent_membership(request) is None
+        parent = get_parent_membership(request)
+        if not parent:
+            return True
+
+        resource = getattr(view, "permission_resource", None)
+        if (
+            resource == "branches"
+            and getattr(request, "org", None)
+            and parent.parent_company_id == request.org.parent_company_id
+            and parent.role == ParentCompanyMember.PARENT_ADMIN
+        ):
+            return True
+
+        return False
 
 
 class IsParentAdmin(BasePermission):
@@ -322,6 +335,8 @@ class RolePolicyPermission(BasePermission):
 
         parent = get_parent_membership(request)
         if parent and parent.parent_company_id == request.org.parent_company_id:
+            if resource == "branches" and parent.role == ParentCompanyMember.PARENT_ADMIN:
+                return action in {"list", "retrieve", "create", "update", "partial_update"}
             return request.method in ("GET", "HEAD", "OPTIONS")
 
         role = get_member_role(request)

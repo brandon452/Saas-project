@@ -23,5 +23,6 @@ export function useStockTakes(orgId: string, filters: UseStockTakesFilters) {
       )
     },
     enabled: !!orgId,
+    placeholderData: (previousData) => previousData,
   })
 }

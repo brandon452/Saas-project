@@ -22,6 +22,10 @@ export function useClosePeriodMutations(orgId: string) {
     void queryClient.invalidateQueries({ queryKey: ["stock-valuation", orgId] })
   }
 
+  function invalidateSnapshots(periodId: string) {
+    void queryClient.invalidateQueries({ queryKey: ["close-period-snapshots", orgId, periodId] })
+  }
+
   const createPeriod = useMutation({
     mutationFn: (payload: CreatePeriodPayload) =>
       apiRequest<ClosePeriod>(`orgs/${orgId}/close-periods/`, {
@@ -36,9 +40,10 @@ export function useClosePeriodMutations(orgId: string) {
       apiRequest<ClosePeriod>(`orgs/${orgId}/close-periods/${id}/close/`, {
         method: "POST",
       }),
-    onSuccess: () => {
+    onSuccess: (_period, id) => {
       invalidatePeriods()
       invalidateValuation()
+      invalidateSnapshots(id)
     },
   })
 
@@ -47,9 +52,10 @@ export function useClosePeriodMutations(orgId: string) {
       apiRequest<ClosePeriod>(`orgs/${orgId}/close-periods/${id}/reopen/`, {
         method: "POST",
       }),
-    onSuccess: () => {
+    onSuccess: (_period, id) => {
       invalidatePeriods()
       invalidateValuation()
+      invalidateSnapshots(id)
     },
   })
 

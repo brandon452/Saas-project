@@ -32,6 +32,10 @@ class ParentCompany(models.Model):
 
 
 class Organization(models.Model):
+    DEFAULT_CURRENCY = "USD"
+    DEFAULT_TIMEZONE = "UTC"
+    DEFAULT_PURCHASE_ORDER_PREFIX = "PO"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     parent_company = models.ForeignKey(
         ParentCompany,
@@ -42,6 +46,13 @@ class Organization(models.Model):
     slug = models.SlugField(unique=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     is_active = models.BooleanField(default=True)
+    default_currency = models.CharField(max_length=3, default=DEFAULT_CURRENCY)
+    default_timezone = models.CharField(max_length=64, default=DEFAULT_TIMEZONE)
+    allow_negative_stock = models.BooleanField(default=False)
+    purchase_order_prefix = models.CharField(max_length=12, default=DEFAULT_PURCHASE_ORDER_PREFIX)
+    purchase_order_next_number = models.PositiveIntegerField(default=1)
+    branch_transfer_approval_required = models.BooleanField(default=True)
+    stock_take_approval_required = models.BooleanField(default=True)
 
     def __str__(self):
         return self.name

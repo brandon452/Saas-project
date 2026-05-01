@@ -32,5 +32,6 @@ export function useBranchItemCatalog(params: UseBranchItemCatalogParams) {
       )
     },
     enabled: !!params.orgId && !!params.branchId,
+    placeholderData: (previousData) => previousData,
   })
 }

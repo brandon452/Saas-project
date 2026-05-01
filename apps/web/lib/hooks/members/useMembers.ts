@@ -73,5 +73,6 @@ export function useMembers({ orgId, is_active }: UseMembersParams) {
       return members.map(normalizeMember)
     },
     enabled: !!orgId,
+    placeholderData: (previousData) => previousData,
   })
 }

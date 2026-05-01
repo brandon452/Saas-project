@@ -20,7 +20,7 @@ from .serializers import (
     PurchaseOrderSerializer,
     PurchaseOrderUpdateSerializer,
 )
-from .services import generate_po_number
+from .services import generate_po_number, sync_purchase_order_next_number
 
 
 class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
@@ -90,11 +90,12 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
         for _ in range(5):
             po_number = generate_po_number(self.request.org)
             try:
-                serializer.save(
+                purchase_order = serializer.save(
                     organization=self.request.org,
                     created_by=self.request.user,
                     po_number=po_number,
                 )
+                sync_purchase_order_next_number(self.request.org, purchase_order.po_number)
                 return
             except IntegrityError as exc:
                 # Retry on rare sequence race collisions.

@@ -120,7 +120,7 @@ export default function ParentMasterItemsPage() {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            You do not have permission to view the master item catalog.
+            You do not have permission to view the global catalog.
           </p>
         </CardContent>
       </Card>
@@ -131,11 +131,11 @@ export default function ParentMasterItemsPage() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Could not load master items</CardTitle>
+          <CardTitle>Could not load catalog items</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            There was a problem loading master items. Try again.
+            There was a problem loading the global catalog. Try again.
           </p>
           <Button onClick={() => void masterItemsQuery.refetch()}>Retry</Button>
         </CardContent>
@@ -146,7 +146,7 @@ export default function ParentMasterItemsPage() {
   const items = masterItemsQuery.data?.results ?? []
   const count = masterItemsQuery.data?.count ?? 0
 
-  let emptyMessage = isActive === "true" ? "No active master items found" : "No inactive master items found"
+  let emptyMessage = isActive === "true" ? "No active catalog items found" : "No inactive catalog items found"
   if (search) {
     emptyMessage = "No items match your search"
   }
@@ -155,17 +155,17 @@ export default function ParentMasterItemsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Master Items</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Global Catalog</h1>
           <p className="text-sm text-muted-foreground">
-            Manage the network-wide item catalog available to organisations.
+            Manage org-agnostic item definitions that each organization can activate and configure locally.
           </p>
         </div>
-        {isParentAdmin ? <Button onClick={() => setCreateOpen(true)}>New Master Item</Button> : null}
+        {isParentAdmin ? <Button onClick={() => setCreateOpen(true)}>New Catalog Item</Button> : null}
       </div>
 
       <div className="grid gap-4 rounded-xl border border-border bg-card p-4 md:grid-cols-[2fr_1fr]">
         <div className="space-y-2">
-          <Label htmlFor="master-item-search">Search</Label>
+          <Label htmlFor="master-item-search">Search catalog</Label>
           <Input
             id="master-item-search"
             value={searchDraft}
@@ -222,7 +222,7 @@ export default function ParentMasterItemsPage() {
       </Card>
 
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-muted-foreground">Total master items: {count}</p>
+        <p className="text-sm text-muted-foreground">Total catalog items: {count}</p>
         <div className="flex items-center gap-3">
           <Button
             variant="ghost"

@@ -95,6 +95,47 @@ class ClosePeriodServiceTests(TransactionTestCase):
         self.assertEqual(snapshot.quantity_on_hand, Decimal("5.0000"))
         self.assertEqual(snapshot.average_valuation, Decimal("56.2500"))
 
+    def test_close_historical_period_uses_period_end_ledger_balance(self):
+        period_start = timezone.now() - timezone.timedelta(days=10)
+        period_end = timezone.now() - timezone.timedelta(days=5)
+        after_period = timezone.now() - timezone.timedelta(days=2)
+
+        record_stock_movement(
+            org=self.org,
+            branch=self.branch,
+            item=self.item,
+            quantity=Decimal("10.0000"),
+            movement_type=StockLedger.MOVEMENT_RECEIPT,
+            unit_cost=Decimal("8.0000"),
+            performed_by=self.user,
+            occurred_at=period_start,
+            idempotency_key="historical-seed",
+        )
+        record_stock_movement(
+            org=self.org,
+            branch=self.branch,
+            item=self.item,
+            quantity=Decimal("-4.0000"),
+            movement_type=StockLedger.MOVEMENT_ISSUE,
+            performed_by=self.user,
+            occurred_at=after_period,
+            idempotency_key="after-period-issue",
+        )
+
+        period = InventoryClosePeriod.objects.create(
+            organization=self.org,
+            start_date=period_start.date(),
+            end_date=period_end.date(),
+            status=InventoryClosePeriod.OPEN,
+        )
+
+        close_period(period, closed_by=self.user)
+
+        snapshot = InventoryCloseSnapshot.objects.get(period=period, branch=self.branch, item=self.item)
+        self.assertEqual(snapshot.quantity_on_hand, Decimal("10.0000"))
+        self.assertEqual(snapshot.average_unit_cost, Decimal("8.0000"))
+        self.assertEqual(snapshot.average_valuation, Decimal("80.0000"))
+
     def test_approve_stock_take_blocks_missing_avco(self):
         second_item = OrgItem.objects.create(
             organization=self.org,
@@ -252,6 +293,21 @@ class ClosePeriodApiTests(APITestCase):
             HTTP_HOST=self._host(),
         )
         self.assertEqual(response.status_code, 403)
+
+    def test_create_rejects_future_end_date(self):
+        self.client.force_authenticate(self.owner)
+        future = timezone.now().date() + timezone.timedelta(days=1)
+        response = self.client.post(
+            self._base_url(),
+            {
+                "start_date": str(timezone.now().date()),
+                "end_date": str(future),
+            },
+            format="json",
+            HTTP_HOST=self._host(),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("end_date cannot be in the future", str(response.data))
 
 
 class BackfillCostStateCommandTests(TestCase):

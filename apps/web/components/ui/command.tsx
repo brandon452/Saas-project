@@ -56,6 +56,12 @@ export function CommandItem({
   value: string
   onSelect?: (value: string) => void
 }) {
+  const touchStartRef = React.useRef<{ x: number; y: number } | null>(null)
+
+  function handleSelect() {
+    onSelect?.(value)
+  }
+
   return (
     <button
       type="button"
@@ -63,7 +69,27 @@ export function CommandItem({
         "flex w-full items-center rounded-md px-2 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground",
         className,
       )}
-      onClick={() => onSelect?.(value)}
+      onClick={handleSelect}
+      onTouchStart={(event) => {
+        const touch = event.touches[0]
+        touchStartRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null
+      }}
+      onTouchEnd={(event) => {
+        const touch = event.changedTouches[0]
+        const start = touchStartRef.current
+        touchStartRef.current = null
+
+        if (touch && start) {
+          const deltaX = Math.abs(touch.clientX - start.x)
+          const deltaY = Math.abs(touch.clientY - start.y)
+          const isTap = deltaX < 8 && deltaY < 8
+
+          if (isTap) {
+          event.preventDefault()
+          handleSelect()
+          }
+        }
+      }}
     >
       {children}
     </button>

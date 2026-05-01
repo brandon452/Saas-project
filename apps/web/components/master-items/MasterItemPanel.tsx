@@ -28,14 +28,14 @@ function getUpdateErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : ""
 
   if (message.includes("403")) {
-    return "You do not have permission to update master items."
+    return "You do not have permission to update catalog items."
   }
 
   if (message.includes("400")) {
     return "Name or SKU is invalid, or the SKU already exists."
   }
 
-  return "Could not save master item changes."
+  return "Could not save catalog item changes."
 }
 
 function getStatusErrorMessage(error: unknown, isReactivation: boolean) {
@@ -43,11 +43,11 @@ function getStatusErrorMessage(error: unknown, isReactivation: boolean) {
 
   if (message.includes("403")) {
     return isReactivation
-      ? "You do not have permission to reactivate master items."
-      : "You do not have permission to deactivate master items."
+      ? "You do not have permission to reactivate catalog items."
+      : "You do not have permission to deactivate catalog items."
   }
 
-  return isReactivation ? "Could not reactivate master item." : "Could not deactivate master item."
+  return isReactivation ? "Could not reactivate catalog item." : "Could not deactivate catalog item."
 }
 
 export function MasterItemPanel({
@@ -145,7 +145,7 @@ export function MasterItemPanel({
           ) : detailQuery.isError ? (
             <div className="space-y-4">
               <SheetHeader>
-                <SheetTitle>Could not load master item</SheetTitle>
+                <SheetTitle>Could not load catalog item</SheetTitle>
                 <SheetDescription>There was a problem loading this item.</SheetDescription>
               </SheetHeader>
               <Button onClick={() => void detailQuery.refetch()}>Retry</Button>
@@ -240,8 +240,8 @@ export function MasterItemPanel({
       <ConfirmDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
-        title="Deactivate Master Item"
-        description="Deactivate this item? It will no longer be available for org activation."
+        title="Deactivate Catalog Item"
+        description="Deactivate this catalog item? Organizations will no longer be able to activate it."
         confirmLabel="Deactivate"
         onConfirm={() => {
           void handleDeactivate()

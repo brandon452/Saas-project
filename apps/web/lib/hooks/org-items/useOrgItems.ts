@@ -28,5 +28,6 @@ export function useOrgItems({ orgId, search, is_active, page }: UseOrgItemsParam
       return apiRequest<OrgItemListResponse>(`orgs/${orgId}/inventory/items/?${params.toString()}`)
     },
     enabled: !!orgId,
+    placeholderData: (previousData) => previousData,
   })
 }

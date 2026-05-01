@@ -43,8 +43,9 @@ export function usePurchaseOrders(params: UsePurchaseOrdersParams) {
     queryFn: () =>
       apiRequest<PaginatedResponse<PurchaseOrder>>(
         `orgs/${orgId}/purchase-orders/?${searchParams.toString()}`,
-      ),
+    ),
     enabled: !!orgId,
     staleTime: 30 * 1000,
+    placeholderData: (previousData) => previousData,
   })
 }

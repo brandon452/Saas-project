@@ -175,7 +175,7 @@ export default function CostTrendReportPage() {
   })
 
   const itemResults = itemSearchQuery.data?.results ?? []
-  const reportData = useMemo(() => reportQuery.data ?? [], [reportQuery.data])
+  const reportData = useMemo(() => reportQuery.data?.results ?? [], [reportQuery.data])
   const selectedItemLabel = item
     ? (getSelectedItemLabel(item, itemSearchDraft, itemResults) ??
       selectedItemQuery.data?.name ??
@@ -476,13 +476,22 @@ export default function CostTrendReportPage() {
         </Card>
       ) : (
         <>
+          {reportQuery.data?.truncated ? (
+            <div className="rounded-md border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+              Showing the first {reportQuery.data.limit.toLocaleString()} of{" "}
+              {reportQuery.data.total_count.toLocaleString()} receipt points. Narrow the date
+              range or apply a supplier/branch filter to see all data.
+            </div>
+          ) : null}
+
           <Card>
             <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div className="space-y-1">
                 <CardTitle>Trend Chart</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  {reportData.length} receipt point{reportData.length === 1 ? "" : "s"} in the
-                  current filter window.
+                  {reportQuery.data?.truncated
+                    ? `Showing ${reportData.length} of ${(reportQuery.data.total_count).toLocaleString()} receipt points.`
+                    : `${reportData.length} receipt point${reportData.length === 1 ? "" : "s"} in the current filter window.`}
                 </p>
               </div>
               <div className="inline-flex rounded-md border border-border bg-muted p-1">

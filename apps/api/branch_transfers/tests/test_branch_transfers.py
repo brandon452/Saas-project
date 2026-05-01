@@ -179,6 +179,12 @@ class BranchTransferApiTests(APITestCase):
         self.assertEqual(created.created_by, self.sender_owner)
         self.assertEqual(created.status, BranchTransfer.DRAFT)
 
+        self.acme.branch_transfer_approval_required = False
+        self.acme.save(update_fields=["branch_transfer_approval_required"])
+        auto_approved = self._create_transfer(user=self.sender_owner)
+        self.assertEqual(auto_approved.status_code, 201)
+        self.assertEqual(auto_approved.data["status"], BranchTransfer.APPROVED)
+
         self._auth(self.sender_owner)
         self.assertEqual(
             self._create_transfer(from_branch=str(self.globex_branch.id)).status_code,

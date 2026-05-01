@@ -6,6 +6,7 @@ import { getCsrfHeader } from "./csrf"
  * the same refresh request before retrying.
  */
 let refreshPromise: Promise<boolean> | null = null
+let logoutInProgress = false
 
 const SAFE_METHODS = ["GET", "HEAD", "OPTIONS"]
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? ""
@@ -51,6 +52,10 @@ export function getApiErrorMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
+export function setLogoutInProgress(value: boolean): void {
+  logoutInProgress = value
+}
+
 export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
@@ -63,6 +68,10 @@ export async function apiRequest<T>(
 
   const headers: Record<string, string> = {}
   const method = (options.method ?? "GET").toUpperCase()
+
+  if (logoutInProgress && cleanPath !== "auth/logout/" && cleanPath !== "auth/login/") {
+    throw new ApiError(401, { detail: "Logout in progress." }, "Logout in progress.")
+  }
 
   if (options.body) {
     headers["Content-Type"] = "application/json"
@@ -87,7 +96,7 @@ export async function apiRequest<T>(
 
   const refreshable = cleanPath !== "auth/refresh/" && cleanPath !== "auth/login/"
 
-  if (res.status === 401 && refreshable) {
+  if (res.status === 401 && refreshable && !logoutInProgress) {
     const refreshed = await getRefreshPromise()
     if (refreshed) {
       return apiRequest<T>(path, options, orgId, branchId)
@@ -110,6 +119,10 @@ export async function apiRequest<T>(
 
   if (!res.ok) {
     throw new ApiError(res.status, data)
+  }
+
+  if (cleanPath === "auth/login/") {
+    setLogoutInProgress(false)
   }
 
   if (res.status === 204) {

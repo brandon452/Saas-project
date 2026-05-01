@@ -27,7 +27,10 @@ export function useSidebar() {
 }
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
-  const [collapsed, setCollapsed] = React.useState(false)
+  const [collapsed, setCollapsed] = React.useState(() => {
+    if (typeof window === "undefined") return false
+    return window.matchMedia("(max-width: 767px)").matches
+  })
 
   return (
     <SidebarContext.Provider value={{ collapsed, setCollapsed }}>
@@ -44,19 +47,29 @@ export function Sidebar({
   collapsible?: "icon"
   className?: string
 }) {
-  const { collapsed } = useSidebarContext()
+  const { collapsed, setCollapsed } = useSidebarContext()
 
   return (
-    <aside
-      data-collapsible={collapsed ? "icon" : ""}
-      className={cn(
-        "group flex h-screen shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width]",
-        collapsed ? "w-20" : "w-72",
-        className,
-      )}
-    >
-      {children}
-    </aside>
+    <>
+      {!collapsed ? (
+        <button
+          type="button"
+          aria-label="Close sidebar"
+          className="fixed inset-0 z-30 h-dvh bg-black/25 md:hidden"
+          onClick={() => setCollapsed(true)}
+        />
+      ) : null}
+      <aside
+        data-collapsible={collapsed ? "icon" : ""}
+        className={cn(
+          "group fixed inset-y-0 left-0 z-40 flex h-dvh w-[min(18rem,calc(100vw-3rem))] shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-xl transition-[transform,width] md:relative md:z-auto md:h-screen md:translate-x-0 md:shadow-none",
+          collapsed ? "-translate-x-full md:w-20" : "translate-x-0 md:w-72",
+          className,
+        )}
+      >
+        {children}
+      </aside>
+    </>
   )
 }
 
@@ -101,7 +114,7 @@ export function SidebarContent({
   const { collapsed } = useSidebarContext()
 
   return (
-    <div className={cn("flex-1 overflow-y-auto pb-3", collapsed ? "px-2" : "px-3", className)}>
+    <div className={cn("flex-1 overflow-y-auto overscroll-contain pb-4", collapsed ? "px-2" : "px-3", className)}>
       {children}
     </div>
   )
@@ -116,7 +129,11 @@ export function SidebarFooter({
 }) {
   const { collapsed } = useSidebarContext()
 
-  return <div className={cn(collapsed ? "p-2" : "p-3", className)}>{children}</div>
+  return (
+    <div className={cn("shrink-0 border-t border-sidebar-border bg-sidebar", collapsed ? "p-2" : "p-3", className)}>
+      {children}
+    </div>
+  )
 }
 
 export function SidebarGroup({

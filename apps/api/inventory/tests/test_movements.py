@@ -181,6 +181,36 @@ class StockMovementServiceTests(TransactionTestCase):
             Decimal("3.0000"),
         )
 
+    def test_idempotent_retry_returns_original_row_after_period_closes(self):
+        occurred_at = timezone.now()
+        first, created_first = self._receipt(
+            "3.0000",
+            unit_cost="8.0000",
+            occurred_at=occurred_at,
+            idempotency_key="closed-retry",
+        )
+        InventoryClosePeriod.objects.create(
+            organization=self.org,
+            start_date=occurred_at.date(),
+            end_date=occurred_at.date(),
+            status=InventoryClosePeriod.CLOSED,
+        )
+
+        second, created_second = self._receipt(
+            "9.0000",
+            unit_cost="99.0000",
+            occurred_at=occurred_at,
+            idempotency_key="closed-retry",
+        )
+
+        self.assertTrue(created_first)
+        self.assertFalse(created_second)
+        self.assertEqual(first.id, second.id)
+        self.assertEqual(
+            StockOnHand.objects.for_org(self.org).get(branch=self.branch, item=self.item).quantity,
+            Decimal("3.0000"),
+        )
+
 
 class StockMovementApiTests(APITestCase):
     def _create_org_item(self, organization, name, sku):
@@ -206,6 +236,16 @@ class StockMovementApiTests(APITestCase):
 
     def _url(self):
         return f"/api/orgs/{self.org.id}/inventory/movements/"
+
+    def test_list_rejects_invalid_item_filter_uuid(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.get(
+            f"{self._url()}?item=not-a-uuid",
+            HTTP_HOST="acme.localhost:8000",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["item"][0], "Enter a valid UUID.")
 
     def _post(self, payload):
         self.client.force_authenticate(self.user)

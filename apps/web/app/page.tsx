@@ -19,13 +19,13 @@ export default function RootPage() {
       return
     }
 
-    if (user.is_superuser) {
-      router.replace("/operator/parent-companies")
+    if (user.is_parent_member) {
+      router.replace("/parent/organizations")
       return
     }
 
-    if (user.is_parent_member) {
-      router.replace("/parent/master-items")
+    if (user.is_superuser) {
+      router.replace("/operator/parent-companies")
       return
     }
 

@@ -17,7 +17,7 @@ class ParentMemberViewSet(viewsets.ModelViewSet):
         parent = get_parent_membership(self.request)
         return ParentCompanyMember.objects.filter(
             parent_company=parent.parent_company,
-        ).select_related("user", "created_by", "parent_company")
+        ).select_related("user", "created_by", "parent_company").order_by("user__email", "user__username", "id")
 
     def get_serializer_class(self):
         if self.action == "create":

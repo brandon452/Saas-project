@@ -169,12 +169,24 @@ export function getNavGroups(orgId: string): NavGroup[] {
 export function getParentNavGroups(): NavGroup[] {
   return [
     {
-      label: "Catalog",
+      label: "Network",
       items: [
         {
-          label: "Master Items",
+          label: "Organizations",
+          href: "/parent/organizations",
+          icon: Building2,
+          allowedRoles: "all",
+        },
+        {
+          label: "Global Catalog",
           href: "/parent/master-items",
           icon: BookOpen,
+          allowedRoles: "all",
+        },
+        {
+          label: "Parent Users",
+          href: "/parent/users",
+          icon: Users,
           allowedRoles: "all",
         },
       ],

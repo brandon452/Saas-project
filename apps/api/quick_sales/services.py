@@ -62,7 +62,8 @@ def void_quick_sale(org, quick_sale, *, performed_by=None):
     if quick_sale.status != QuickSale.STATUS_CONFIRMED:
         raise ValidationError("Only a CONFIRMED sale can be voided.")
 
-    assert_inventory_period_open(org, None)
+    voided_at = timezone.now()
+    assert_inventory_period_open(org, voided_at)
 
     for line in quick_sale.lines.select_related("item").all():
         record_stock_movement(
@@ -75,11 +76,12 @@ def void_quick_sale(org, quick_sale, *, performed_by=None):
             reference_type="QUICK_SALE_VOID",
             reference_id=str(quick_sale.id),
             _force_unit_cost=line.unit_cost,
+            occurred_at=voided_at,
         )
 
     quick_sale.status = QuickSale.STATUS_VOIDED
     quick_sale.voided_by = performed_by
-    quick_sale.voided_at = timezone.now()
+    quick_sale.voided_at = voided_at
     quick_sale.save(update_fields=["status", "voided_by", "voided_at"])
 
     return quick_sale

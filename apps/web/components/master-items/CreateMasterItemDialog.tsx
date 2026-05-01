@@ -25,14 +25,14 @@ function getCreateErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : ""
 
   if (message.includes("403")) {
-    return "You do not have permission to create master items."
+    return "You do not have permission to create catalog items."
   }
 
   if (message.includes("400")) {
     return "Name or SKU is invalid, or the SKU already exists."
   }
 
-  return "Could not create master item."
+  return "Could not create catalog item."
 }
 
 export function CreateMasterItemDialog({
@@ -71,8 +71,8 @@ export function CreateMasterItemDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New Master Item</DialogTitle>
-          <DialogDescription>Create a network-wide catalog item for organisations to activate.</DialogDescription>
+          <DialogTitle>New Catalog Item</DialogTitle>
+          <DialogDescription>Create an org-agnostic item definition for organizations to activate.</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -106,7 +106,7 @@ export function CreateMasterItemDialog({
         <DialogFooter>
           <DialogClose disabled={createMasterItem.isPending}>Cancel</DialogClose>
           <Button onClick={handleSubmit} disabled={createMasterItem.isPending}>
-            {createMasterItem.isPending ? "Creating..." : "Create Master Item"}
+            {createMasterItem.isPending ? "Creating..." : "Create Catalog Item"}
           </Button>
         </DialogFooter>
       </DialogContent>

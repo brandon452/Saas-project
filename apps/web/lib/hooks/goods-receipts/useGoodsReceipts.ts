@@ -44,5 +44,6 @@ export function useGoodsReceipts(params: UseGoodsReceiptsParams) {
       )
     },
     enabled: !!orgId,
+    placeholderData: (previousData) => previousData,
   })
 }
