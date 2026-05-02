@@ -43,6 +43,7 @@ class Supplier(TenantModel):
             ),
             models.UniqueConstraint(
                 fields=["organization", "code"],
+                condition=~models.Q(code=""),
                 name="unique_supplier_code_per_org",
             ),
         ]

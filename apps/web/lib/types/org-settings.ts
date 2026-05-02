@@ -21,7 +21,6 @@ export interface UpdateOrgSettingsPayload {
   default_timezone?: string
   allow_negative_stock?: boolean
   purchase_order_prefix?: string
-  purchase_order_next_number?: number
   branch_transfer_approval_required?: boolean
   stock_take_approval_required?: boolean
 }

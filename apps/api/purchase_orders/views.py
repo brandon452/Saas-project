@@ -7,6 +7,7 @@ from rest_framework.exceptions import MethodNotAllowed, ValidationError as DRFVa
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
+from audit.services import log_audit_event
 from tenancy.mixins import OrgScopedViewSetMixin
 from tenancy.permissions import IsOrgOperationalUser, RolePolicyMixin, get_org_membership
 
@@ -125,6 +126,20 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
 
         po.status = PurchaseOrder.SUBMITTED
         po.save(update_fields=["status", "updated_at"])
+        log_audit_event(
+            organization=self.request.org,
+            actor_user=request.user,
+            event_type="po.submitted",
+            resource_type="purchase_order",
+            resource_id=po.id,
+            summary=f"Purchase order {po.po_number} submitted",
+            diff_json={"status": {"before": PurchaseOrder.DRAFT, "after": PurchaseOrder.SUBMITTED}},
+            metadata_json={
+                "po_number": po.po_number,
+                "supplier_id": str(po.supplier_id),
+                "branch_id": str(po.branch_id),
+            },
+        )
         return Response(PurchaseOrderSerializer(po).data)
 
     @action(detail=True, methods=["post"], url_path="cancel")
@@ -139,8 +154,23 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        previous_status = po.status
         po.status = PurchaseOrder.CANCELLED
         po.save(update_fields=["status", "updated_at"])
+        log_audit_event(
+            organization=self.request.org,
+            actor_user=request.user,
+            event_type="po.cancelled",
+            resource_type="purchase_order",
+            resource_id=po.id,
+            summary=f"Purchase order {po.po_number} cancelled",
+            diff_json={"status": {"before": previous_status, "after": PurchaseOrder.CANCELLED}},
+            metadata_json={
+                "po_number": po.po_number,
+                "supplier_id": str(po.supplier_id),
+                "branch_id": str(po.branch_id),
+            },
+        )
         return Response(PurchaseOrderSerializer(po).data)
 
     @action(detail=True, methods=["get"], url_path="lines")

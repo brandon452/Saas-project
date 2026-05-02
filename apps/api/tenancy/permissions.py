@@ -244,13 +244,15 @@ class IsOrgOperationalUser(BasePermission):
             return True
 
         resource = getattr(view, "permission_resource", None)
+        org = getattr(request, "org", None)
         if (
             resource == "branches"
-            and getattr(request, "org", None)
-            and parent.parent_company_id == request.org.parent_company_id
+            and org
+            and parent.parent_company_id == org.parent_company_id
             and parent.role == ParentCompanyMember.PARENT_ADMIN
         ):
-            return True
+            host = request.get_host().split(":")[0].lower()
+            return host == f"{org.slug}.localhost"
 
         return False
 

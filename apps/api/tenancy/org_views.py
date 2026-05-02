@@ -4,6 +4,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from audit.services import changed_field_diff, log_audit_event
+
 from .models import Organization, OrganizationMember
 from .permissions import IsOrgOwnerOrAdminOrParentAdmin, IsParentAdmin, get_parent_membership
 from .serializers import OrganizationSerializer, OrganizationSettingsSerializer
@@ -99,7 +101,30 @@ class OrgSettingsView(APIView):
         return Response(serializer.data)
 
     def patch(self, request, org_id):
+        audited_fields = [
+            "name",
+            "default_currency",
+            "default_timezone",
+            "allow_negative_stock",
+            "purchase_order_prefix",
+            "branch_transfer_approval_required",
+            "stock_take_approval_required",
+        ]
+        before = {field: getattr(request.org, field) for field in audited_fields}
         serializer = OrganizationSettingsSerializer(request.org, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()
+        after = {field: getattr(updated, field) for field in audited_fields}
+        diff = changed_field_diff(before, after, audited_fields)
+        if diff:
+            log_audit_event(
+                organization=request.org,
+                actor_user=request.user,
+                event_type="org.settings.updated",
+                resource_type="organization",
+                resource_id=request.org.id,
+                summary="Organization settings updated",
+                diff_json=diff,
+                metadata_json={},
+            )
         return Response(OrganizationSettingsSerializer(updated).data)

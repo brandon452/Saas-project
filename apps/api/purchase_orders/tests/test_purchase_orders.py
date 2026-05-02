@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.test import TransactionTestCase
 from rest_framework.test import APITestCase
 
+from audit.models import AuditEvent
 from branches.models import Branch
 from inventory.models import MasterItem, OrgItem
 from purchase_orders.models import PurchaseOrder
@@ -386,6 +387,13 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertEqual(owner_submit.status_code, 200)
         po.refresh_from_db()
         self.assertEqual(po.status, PurchaseOrder.SUBMITTED)
+        submit_event = AuditEvent.objects.filter(
+            organization=self.acme,
+            event_type="po.submitted",
+            resource_id=str(po.id),
+        ).first()
+        self.assertIsNotNone(submit_event)
+        self.assertEqual(submit_event.diff_json["status"]["after"], PurchaseOrder.SUBMITTED)
 
         self._auth(self.admin)
         already_submitted = self.client.post(
@@ -485,6 +493,13 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertEqual(cancel_draft.status_code, 200)
         draft_po.refresh_from_db()
         self.assertEqual(draft_po.status, PurchaseOrder.CANCELLED)
+        cancel_event = AuditEvent.objects.filter(
+            organization=self.acme,
+            event_type="po.cancelled",
+            resource_id=str(draft_po.id),
+        ).first()
+        self.assertIsNotNone(cancel_event)
+        self.assertEqual(cancel_event.diff_json["status"]["after"], PurchaseOrder.CANCELLED)
 
         cancel_submitted = self.client.post(
             self._detail_url(submitted_po.id, "cancel/"),

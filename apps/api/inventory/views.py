@@ -15,6 +15,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from branches.models import Branch
+from audit.services import log_audit_event
 from tenancy.mixins import BranchScopedMixin, OrgScopedViewSetMixin
 from tenancy.models import Organization
 from tenancy.permissions import (
@@ -628,12 +629,39 @@ class StockTakeViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelVie
 
     def _run_transition(self, request, service_fn):
         stock_take = self.get_object()
+        before_status = stock_take.status
         try:
             service_fn(stock_take, performed_by=request.user)
         except DjangoValidationError as exc:
             raise DRFValidationError({"detail": exc.messages})
 
         stock_take.refresh_from_db()
+        event_map = {
+            "start_stock_take": "stock_take.started",
+            "submit_stock_take": "stock_take.submitted",
+            "reopen_stock_take": "stock_take.reopened",
+            "cancel_stock_take": "stock_take.cancelled",
+        }
+        if service_fn.__name__ == "approve_stock_take":
+            event_type = (
+                "stock_take.completed_with_variances"
+                if stock_take.status == StockTake.COMPLETED_WITH_VARIANCES
+                else "stock_take.completed"
+            )
+        else:
+            event_type = event_map.get(service_fn.__name__)
+
+        if event_type:
+            log_audit_event(
+                organization=request.org,
+                actor_user=request.user,
+                event_type=event_type,
+                resource_type="stock_take",
+                resource_id=stock_take.id,
+                summary=f"{event_type.replace('_', ' ').replace('.', ' ')} {stock_take.id}",
+                metadata_json={"stock_take_id": str(stock_take.id), "branch_id": str(stock_take.branch_id)},
+                diff_json={"status": {"before": before_status, "after": stock_take.status}},
+            )
         return Response(StockTakeDetailSerializer(stock_take, context={"request": request}).data)
 
     @action(detail=True, methods=["post"], url_path="start")
@@ -753,26 +781,62 @@ class ClosePeriodViewSet(OrgScopedViewSetMixin, viewsets.GenericViewSet):
         )
         serializer.is_valid(raise_exception=True)
         period = serializer.save(organization=request.org, status=InventoryClosePeriod.OPEN)
+        log_audit_event(
+            organization=request.org,
+            actor_user=request.user,
+            event_type="close_period.created",
+            resource_type="inventory_close_period",
+            resource_id=period.id,
+            summary=f"Created close period {period.id}",
+            metadata_json={
+                "period_id": str(period.id),
+                "start_date": period.start_date.isoformat(),
+                "end_date": period.end_date.isoformat(),
+            },
+            diff_json=None,
+        )
         return Response(InventoryClosePeriodSerializer(period).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="close")
     def close(self, request, *args, **kwargs):
         period = self.get_object()
+        before_status = period.status
         try:
             close_period(period, closed_by=request.user)
         except DjangoValidationError as exc:
             raise DRFValidationError({"detail": exc.messages})
         period.refresh_from_db()
+        log_audit_event(
+            organization=request.org,
+            actor_user=request.user,
+            event_type="close_period.closed",
+            resource_type="inventory_close_period",
+            resource_id=period.id,
+            summary=f"Closed period {period.id}",
+            metadata_json={"period_id": str(period.id)},
+            diff_json={"status": {"before": before_status, "after": InventoryClosePeriod.CLOSED}},
+        )
         return Response(InventoryClosePeriodSerializer(period).data)
 
     @action(detail=True, methods=["post"], url_path="reopen")
     def reopen(self, request, *args, **kwargs):
         period = self.get_object()
+        before_status = period.status
         try:
             reopen_period(period, reopened_by=request.user)
         except DjangoValidationError as exc:
             raise DRFValidationError({"detail": exc.messages})
         period.refresh_from_db()
+        log_audit_event(
+            organization=request.org,
+            actor_user=request.user,
+            event_type="close_period.reopened",
+            resource_type="inventory_close_period",
+            resource_id=period.id,
+            summary=f"Reopened period {period.id}",
+            metadata_json={"period_id": str(period.id)},
+            diff_json={"status": {"before": before_status, "after": period.status}},
+        )
         return Response(InventoryClosePeriodSerializer(period).data)
 
     @action(detail=True, methods=["get"], url_path="snapshots")

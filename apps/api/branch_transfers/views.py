@@ -18,6 +18,7 @@ from tenancy.permissions import (
     get_org_membership,
     get_parent_membership,
 )
+from audit.services import log_audit_event
 
 from .models import BranchTransfer, BranchTransferLine
 from .serializers import (
@@ -136,15 +137,16 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
         lines_data = serializer.validated_data["lines"]
         to_branch = serializer.validated_data["to_branch"]
 
+        initial_status = (
+            BranchTransfer.DRAFT
+            if self.request.org.branch_transfer_approval_required
+            else BranchTransfer.APPROVED
+        )
         transfer = serializer.save(
             organization=self.request.org,
             to_organization=to_branch.organization,
             created_by=self.request.user,
-            status=(
-                BranchTransfer.DRAFT
-                if self.request.org.branch_transfer_approval_required
-                else BranchTransfer.APPROVED
-            ),
+            status=initial_status,
         )
 
         for line_data in lines_data:
@@ -152,6 +154,18 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
                 transfer=transfer,
                 item=line_data["item"],
                 quantity_sent=line_data["quantity_sent"],
+            )
+
+        if initial_status == BranchTransfer.APPROVED:
+            log_audit_event(
+                organization=self.request.org,
+                actor_user=self.request.user,
+                event_type="branch_transfer.approved",
+                resource_type="branch_transfer",
+                resource_id=transfer.id,
+                summary=f"Approved transfer {transfer.id}",
+                metadata_json={"transfer_id": str(transfer.id), "auto_approved": True},
+                diff_json={"status": {"before": BranchTransfer.DRAFT, "after": BranchTransfer.APPROVED}},
             )
 
     @action(detail=True, methods=["post"], url_path="approve")
@@ -176,6 +190,16 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
         transfer.status = BranchTransfer.APPROVED
         transfer.approved_by = request.user
         transfer.save(update_fields=["status", "approved_by", "updated_at"])
+        log_audit_event(
+            organization=request.org,
+            actor_user=request.user,
+            event_type="branch_transfer.approved",
+            resource_type="branch_transfer",
+            resource_id=transfer.id,
+            summary=f"Approved transfer {transfer.id}",
+            metadata_json={"transfer_id": str(transfer.id), "auto_approved": False},
+            diff_json={"status": {"before": BranchTransfer.DRAFT, "after": BranchTransfer.APPROVED}},
+        )
         return Response(BranchTransferSerializer(transfer).data)
 
     @action(detail=True, methods=["post"], url_path="dispatch")
@@ -189,12 +213,23 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        before_status = transfer.status
         try:
             dispatch_transfer(transfer=transfer, performed_by=request.user)
         except DjangoValidationError as exc:
             raise DRFValidationError({"detail": exc.messages})
 
         transfer.refresh_from_db()
+        log_audit_event(
+            organization=request.org,
+            actor_user=request.user,
+            event_type="branch_transfer.dispatched",
+            resource_type="branch_transfer",
+            resource_id=transfer.id,
+            summary=f"Dispatched transfer {transfer.id}",
+            metadata_json={"transfer_id": str(transfer.id)},
+            diff_json={"status": {"before": before_status, "after": transfer.status}},
+        )
         return Response(BranchTransferSerializer(transfer).data)
 
     @action(detail=True, methods=["post"], url_path="receive")
@@ -211,6 +246,7 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
         serializer = BranchTransferReceiveSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        before_status = transfer.status
         try:
             receive_transfer(
                 transfer=transfer,
@@ -222,6 +258,21 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
             raise DRFValidationError({"detail": exc.messages})
 
         transfer.refresh_from_db()
+        event_type = (
+            "branch_transfer.received_complete"
+            if transfer.status == BranchTransfer.RECEIVED_COMPLETE
+            else "branch_transfer.received_with_variance"
+        )
+        log_audit_event(
+            organization=transfer.to_organization,
+            actor_user=request.user,
+            event_type=event_type,
+            resource_type="branch_transfer",
+            resource_id=transfer.id,
+            summary=f"Received transfer {transfer.id}",
+            metadata_json={"transfer_id": str(transfer.id)},
+            diff_json={"status": {"before": before_status, "after": transfer.status}},
+        )
         return Response(BranchTransferSerializer(transfer).data)
 
     @action(detail=True, methods=["post"], url_path="cancel")
@@ -241,6 +292,17 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        before_status = transfer.status
         transfer.status = BranchTransfer.CANCELLED
         transfer.save(update_fields=["status", "updated_at"])
+        log_audit_event(
+            organization=request.org,
+            actor_user=request.user,
+            event_type="branch_transfer.cancelled",
+            resource_type="branch_transfer",
+            resource_id=transfer.id,
+            summary=f"Cancelled transfer {transfer.id}",
+            metadata_json={"transfer_id": str(transfer.id)},
+            diff_json={"status": {"before": before_status, "after": transfer.status}},
+        )
         return Response(BranchTransferSerializer(transfer).data)

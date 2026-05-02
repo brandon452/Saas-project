@@ -8,12 +8,24 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from audit.services import log_audit_event
+
 from .mixins import OrgScopedViewSetMixin
 from .models import Organization, OrganizationMember, ParentCompanyMember
 from .permissions import IsOrgMemberOrParent, RolePolicyMixin, get_member_role, get_parent_membership
 from .serializers import MemberCreateSerializer, MemberSerializer, MemberUpdateSerializer, UserSearchSerializer
 
 User = get_user_model()
+
+
+def _branch_display(branch):
+    if branch is None:
+        return None
+    return {
+        "id": str(branch.id),
+        "code": branch.code,
+        "name": branch.name,
+    }
 
 
 @extend_schema_view(
@@ -92,11 +104,27 @@ class MemberViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelViewSe
             if active_owner_count <= 1:
                 raise PermissionDenied("You cannot deactivate the last active OWNER in this organization.")
 
+        previous_active = instance.is_active
         instance.is_active = False
         instance.save(update_fields=["is_active"])
+        if previous_active != instance.is_active:
+            log_audit_event(
+                organization=self.request.org,
+                actor_user=self.request.user,
+                event_type="member.status.changed",
+                resource_type="organization_member",
+                resource_id=instance.id,
+                summary="Member status changed",
+                diff_json={"is_active": {"before": previous_active, "after": instance.is_active}},
+                metadata_json={"user_id": str(instance.user_id), "role": instance.role},
+            )
 
     def perform_update(self, serializer):
         instance = self.get_object()
+        old_role = instance.role
+        old_is_active = instance.is_active
+        old_assigned_branch_id = instance.assigned_branch_id
+        old_assigned_branch = instance.assigned_branch
         new_role = serializer.validated_data.get("role", instance.role)
         new_is_active = serializer.validated_data.get("is_active", instance.is_active)
 
@@ -130,7 +158,54 @@ class MemberViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelViewSe
             if active_owner_count <= 1:
                 raise PermissionDenied("You cannot deactivate the last active OWNER in this organization.")
 
-        serializer.save()
+        updated = serializer.save()
+
+        if old_role != updated.role:
+            log_audit_event(
+                organization=self.request.org,
+                actor_user=self.request.user,
+                event_type="member.role.changed",
+                resource_type="organization_member",
+                resource_id=updated.id,
+                summary="Member role changed",
+                diff_json={"role": {"before": old_role, "after": updated.role}},
+                metadata_json={"user_id": str(updated.user_id)},
+            )
+
+        if old_is_active != updated.is_active:
+            log_audit_event(
+                organization=self.request.org,
+                actor_user=self.request.user,
+                event_type="member.status.changed",
+                resource_type="organization_member",
+                resource_id=updated.id,
+                summary="Member status changed",
+                diff_json={"is_active": {"before": old_is_active, "after": updated.is_active}},
+                metadata_json={"user_id": str(updated.user_id), "role": updated.role},
+            )
+
+        if old_assigned_branch_id != updated.assigned_branch_id:
+            log_audit_event(
+                organization=self.request.org,
+                actor_user=self.request.user,
+                event_type="member.branch.changed",
+                resource_type="organization_member",
+                resource_id=updated.id,
+                summary="Member branch assignment changed",
+                diff_json={
+                    "assigned_branch": {
+                        "before": str(old_assigned_branch_id) if old_assigned_branch_id else None,
+                        "after": str(updated.assigned_branch_id) if updated.assigned_branch_id else None,
+                    }
+                },
+                metadata_json={
+                    "user_id": str(updated.user_id),
+                    "branch_display": {
+                        "before": _branch_display(old_assigned_branch),
+                        "after": _branch_display(updated.assigned_branch),
+                    },
+                },
+            )
 
 
 class MemberSearchView(APIView):

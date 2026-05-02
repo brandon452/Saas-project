@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getApiErrorMessage } from "@/lib/api"
+import { useAuditEvents } from "@/lib/hooks/useAuditEvents"
 import { useOrgSettings, useOrgSettingsMutation } from "@/lib/hooks/useOrgSettings"
 import { useAuth } from "@/lib/hooks/useAuth"
 import { useOrg } from "@/lib/hooks/useOrg"
@@ -73,9 +74,14 @@ export default function SettingsPage() {
   const [defaultTimezone, setDefaultTimezone] = useState("UTC")
   const [allowNegativeStock, setAllowNegativeStock] = useState(false)
   const [purchaseOrderPrefix, setPurchaseOrderPrefix] = useState("PO")
-  const [purchaseOrderNextNumber, setPurchaseOrderNextNumber] = useState("1")
   const [branchTransferApprovalRequired, setBranchTransferApprovalRequired] = useState(true)
   const [stockTakeApprovalRequired, setStockTakeApprovalRequired] = useState(true)
+  const [auditEventType, setAuditEventType] = useState("")
+  const [auditResourceId, setAuditResourceId] = useState("")
+  const [auditQueryText, setAuditQueryText] = useState("")
+  const [auditFrom, setAuditFrom] = useState("")
+  const [auditTo, setAuditTo] = useState("")
+  const [changedByMe, setChangedByMe] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
@@ -86,7 +92,6 @@ export default function SettingsPage() {
   const trimmedCurrency = defaultCurrency.trim().toUpperCase()
   const trimmedTimezone = defaultTimezone.trim()
   const trimmedPurchaseOrderPrefix = purchaseOrderPrefix.trim().toUpperCase()
-  const parsedPurchaseOrderNextNumber = Number.parseInt(purchaseOrderNextNumber, 10)
   const hasChanges =
     !!settings &&
     (trimmedName !== settings.name ||
@@ -94,7 +99,6 @@ export default function SettingsPage() {
       trimmedTimezone !== settings.default_timezone ||
       allowNegativeStock !== settings.allow_negative_stock ||
       trimmedPurchaseOrderPrefix !== settings.purchase_order_prefix ||
-      parsedPurchaseOrderNextNumber !== settings.purchase_order_next_number ||
       branchTransferApprovalRequired !== settings.branch_transfer_approval_required ||
       stockTakeApprovalRequired !== settings.stock_take_approval_required)
   const canSubmit =
@@ -102,14 +106,32 @@ export default function SettingsPage() {
     !!trimmedName &&
     /^[A-Z]{3}$/.test(trimmedCurrency) &&
     !!trimmedTimezone &&
-    !!trimmedPurchaseOrderPrefix &&
-    Number.isInteger(parsedPurchaseOrderNextNumber) &&
-    parsedPurchaseOrderNextNumber > 0
+    !!trimmedPurchaseOrderPrefix
   const isBusy = settingsQuery.isFetching || updateSettings.isPending
+  const auditQuery = useAuditEvents(orgId, {
+    event_type: auditEventType || undefined,
+    resource_id: auditResourceId.trim() || undefined,
+    q: auditQueryText.trim() || undefined,
+    from: auditFrom ? `${auditFrom}T00:00:00Z` : undefined,
+    to: auditTo ? `${auditTo}T23:59:59Z` : undefined,
+    changed_by_me: changedByMe,
+    actor_user_id: user?.id,
+  })
   const createdAt = useMemo(
     () => formatCreatedAt(settings?.created_at ?? ""),
     [settings?.created_at],
   )
+  const auditExportHref = useMemo(() => {
+    const params = new URLSearchParams()
+    if (auditEventType) params.set("event_type", auditEventType)
+    if (auditResourceId.trim()) params.set("resource_id", auditResourceId.trim())
+    if (auditQueryText.trim()) params.set("q", auditQueryText.trim())
+    if (auditFrom) params.set("from", `${auditFrom}T00:00:00Z`)
+    if (auditTo) params.set("to", `${auditTo}T23:59:59Z`)
+    if (changedByMe && user?.id) params.set("actor_user_id", user.id)
+    const query = params.toString()
+    return `/api/orgs/${orgId}/audit-events/export/${query ? `?${query}` : ""}`
+  }, [auditEventType, auditResourceId, auditQueryText, auditFrom, auditTo, changedByMe, user?.id, orgId])
 
   useEffect(() => {
     if (settings) {
@@ -118,7 +140,6 @@ export default function SettingsPage() {
       setDefaultTimezone(settings.default_timezone)
       setAllowNegativeStock(settings.allow_negative_stock)
       setPurchaseOrderPrefix(settings.purchase_order_prefix)
-      setPurchaseOrderNextNumber(String(settings.purchase_order_next_number))
       setBranchTransferApprovalRequired(settings.branch_transfer_approval_required)
       setStockTakeApprovalRequired(settings.stock_take_approval_required)
       setError("")
@@ -140,7 +161,6 @@ export default function SettingsPage() {
         default_timezone: trimmedTimezone,
         allow_negative_stock: allowNegativeStock,
         purchase_order_prefix: trimmedPurchaseOrderPrefix,
-        purchase_order_next_number: parsedPurchaseOrderNextNumber,
         branch_transfer_approval_required: branchTransferApprovalRequired,
         stock_take_approval_required: stockTakeApprovalRequired,
       })
@@ -306,15 +326,10 @@ export default function SettingsPage() {
                   <Label htmlFor="po-next-number">Next PO number</Label>
                   <Input
                     id="po-next-number"
-                    type="number"
-                    min={1}
-                    value={purchaseOrderNextNumber}
-                    onChange={(event) => {
-                      setPurchaseOrderNextNumber(event.target.value)
-                      setError("")
-                      setSuccess("")
-                    }}
-                    disabled={isBusy}
+                    type="text"
+                    value={String(settings.purchase_order_next_number)}
+                    disabled
+                    readOnly
                   />
                 </div>
               </div>
@@ -399,7 +414,6 @@ export default function SettingsPage() {
                     setDefaultTimezone(settings.default_timezone)
                     setAllowNegativeStock(settings.allow_negative_stock)
                     setPurchaseOrderPrefix(settings.purchase_order_prefix)
-                    setPurchaseOrderNextNumber(String(settings.purchase_order_next_number))
                     setBranchTransferApprovalRequired(settings.branch_transfer_approval_required)
                     setStockTakeApprovalRequired(settings.stock_take_approval_required)
                     setError("")
@@ -480,6 +494,114 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Audit</CardTitle>
+          <CardDescription>Recent governance changes for this organisation.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="space-y-2">
+              <Label htmlFor="audit-event-type">Event type</Label>
+              <select
+                id="audit-event-type"
+                value={auditEventType}
+                onChange={(event) => setAuditEventType(event.target.value)}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
+              >
+                <option value="">All events</option>
+                <option value="org.settings.updated">Settings updated</option>
+                <option value="member.role.changed">Member role changed</option>
+                <option value="member.status.changed">Member status changed</option>
+                <option value="member.branch.changed">Member branch changed</option>
+                <option value="po.submitted">PO submitted</option>
+                <option value="po.cancelled">PO cancelled</option>
+                <option value="goods_receipt.created">Goods receipt created</option>
+                <option value="supplier.updated">Supplier updated</option>
+                <option value="branch_transfer.received_complete">Transfer received complete</option>
+                <option value="branch_transfer.received_with_variance">Transfer received with variance</option>
+                <option value="stock_take.completed">Stock take completed</option>
+                <option value="stock_take.completed_with_variances">Stock take completed with variances</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="audit-resource-id">Resource ID</Label>
+              <Input
+                id="audit-resource-id"
+                value={auditResourceId}
+                onChange={(event) => setAuditResourceId(event.target.value)}
+                placeholder="UUID or ID"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="audit-q">Search summary</Label>
+              <Input id="audit-q" value={auditQueryText} onChange={(event) => setAuditQueryText(event.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="audit-from">From</Label>
+              <Input id="audit-from" type="date" value={auditFrom} onChange={(event) => setAuditFrom(event.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="audit-to">To</Label>
+              <Input id="audit-to" type="date" value={auditTo} onChange={(event) => setAuditTo(event.target.value)} />
+            </div>
+            <label className="mt-7 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={changedByMe} onChange={(event) => setChangedByMe(event.target.checked)} />
+              Changed by me
+            </label>
+            <div className="mt-7">
+              <Button variant="outline" onClick={() => window.open(auditExportHref, "_blank", "noopener,noreferrer")}>
+                Export CSV
+              </Button>
+            </div>
+          </div>
+
+          {auditQuery.isLoading ? (
+            <Skeleton className="h-24 w-full" />
+          ) : auditQuery.isError ? (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              Could not load audit events.
+            </div>
+          ) : (auditQuery.data?.results.length ?? 0) === 0 ? (
+            <p className="text-sm text-muted-foreground">No audit events found for the selected filters.</p>
+          ) : (
+            <div className="space-y-3">
+              {auditQuery.data?.results.map((event) => (
+                <details key={event.id} className="rounded-md border border-border p-3">
+                  <summary className="cursor-pointer text-sm font-medium">
+                    {new Date(event.occurred_at).toLocaleString()} - {event.summary}
+                  </summary>
+                  <div className="mt-2 space-y-2 text-sm text-muted-foreground">
+                    <p>
+                      <strong className="text-foreground">Actor:</strong>{" "}
+                      {event.actor.name || event.actor.email || event.actor.type}
+                    </p>
+                    <p>
+                      <strong className="text-foreground">Event:</strong>{" "}
+                      {event.event_type === "branch_transfer.received_complete"
+                        ? "branch transfer received complete"
+                        : event.event_type === "branch_transfer.received_with_variance"
+                          ? "branch transfer received with variance"
+                          : event.event_type === "stock_take.completed"
+                            ? "stock take completed"
+                            : event.event_type === "stock_take.completed_with_variances"
+                              ? "stock take completed with variances"
+                              : event.event_type}
+                    </p>
+                    <p>
+                      <strong className="text-foreground">Resource:</strong> {event.resource_type} ({event.resource_id})
+                    </p>
+                    <pre className="overflow-x-auto rounded bg-muted p-2 text-xs">
+                      {JSON.stringify({ diff: event.diff_json, metadata: event.metadata_json }, null, 2)}
+                    </pre>
+                  </div>
+                </details>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

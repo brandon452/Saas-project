@@ -93,7 +93,7 @@ class OrgSettingsTests(APITestCase):
         self.assertEqual(self.org.default_timezone, "Asia/Singapore")
         self.assertTrue(self.org.allow_negative_stock)
         self.assertEqual(self.org.purchase_order_prefix, "SG-PO")
-        self.assertEqual(self.org.purchase_order_next_number, 42)
+        self.assertEqual(self.org.purchase_order_next_number, 1)
         self.assertFalse(self.org.branch_transfer_approval_required)
         self.assertFalse(self.org.stock_take_approval_required)
 
@@ -146,7 +146,6 @@ class OrgSettingsTests(APITestCase):
                 "default_currency": "US",
                 "default_timezone": "Mars/Base",
                 "purchase_order_prefix": "PO!",
-                "purchase_order_next_number": 0,
             },
             format="json",
         )
@@ -155,4 +154,14 @@ class OrgSettingsTests(APITestCase):
         self.assertIn("default_currency", response.data)
         self.assertIn("default_timezone", response.data)
         self.assertIn("purchase_order_prefix", response.data)
-        self.assertIn("purchase_order_next_number", response.data)
+
+    def test_purchase_order_next_number_is_read_only(self):
+        self._auth(self.owner)
+        response = self.client.patch(
+            self._url(),
+            {"purchase_order_next_number": 999},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.org.refresh_from_db()
+        self.assertEqual(self.org.purchase_order_next_number, 1)

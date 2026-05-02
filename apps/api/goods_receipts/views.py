@@ -11,6 +11,7 @@ from rest_framework.viewsets import ModelViewSet
 
 from tenancy.mixins import OrgScopedViewSetMixin
 from tenancy.permissions import IsOrgOperationalUser, RolePolicyMixin, RolePolicyPermission
+from audit.services import log_audit_event
 
 from .models import GoodsReceipt
 from .serializers import (
@@ -132,6 +133,7 @@ class GoodsReceiptViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
                 )
             except DjangoValidationError as exc:
                 raise DRFValidationError({"detail": exc.messages})
+
         else:
             po = serializer.validated_data["purchase_order"]
             receipt = serializer.save(
@@ -149,3 +151,20 @@ class GoodsReceiptViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
                 )
             except DjangoValidationError as exc:
                 raise DRFValidationError({"detail": exc.messages})
+
+        log_audit_event(
+            organization=self.request.org,
+            actor_user=self.request.user,
+            event_type="goods_receipt.created",
+            resource_type="goods_receipt",
+            resource_id=receipt.id,
+            summary=f"Created goods receipt {receipt.id}",
+            metadata_json={
+                "receipt_id": str(receipt.id),
+                "receipt_type": receipt.receipt_type,
+                "branch_id": str(receipt.branch_id) if receipt.branch_id else "",
+                "supplier_id": str(receipt.supplier_id) if receipt.supplier_id else "",
+                "line_count": receipt.lines.count(),
+            },
+            diff_json=None,
+        )

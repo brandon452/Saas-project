@@ -6,6 +6,7 @@ from rest_framework.viewsets import GenericViewSet
 
 from tenancy.mixins import OrgScopedViewSetMixin
 from tenancy.permissions import RolePolicyMixin, get_org_membership, get_parent_membership
+from audit.services import changed_field_diff, log_audit_event
 
 from .models import Supplier, SupplierContact
 from .serializers import (
@@ -27,6 +28,24 @@ class SupplierViewSet(
     mixins.UpdateModelMixin,
     GenericViewSet,
 ):
+    SUPPLIER_AUDIT_FIELDS = [
+        "display_name",
+        "code",
+        "legal_name",
+        "email",
+        "phone",
+        "payment_terms_days",
+        "default_lead_time_days",
+        "currency",
+        "tax_id",
+        "address_line1",
+        "address_line2",
+        "city",
+        "state",
+        "postal_code",
+        "country",
+        "notes",
+    ]
     permission_resource = "suppliers"
     queryset = Supplier.all_objects.none()
     http_method_names = ["get", "post", "patch", "head", "options"]
@@ -92,11 +111,42 @@ class SupplierViewSet(
 
     def perform_create(self, serializer):
         org = self.request.org
-        serializer.save(
+        supplier = serializer.save(
             organization=org,
             created_by=self.request.user,
             code=self._generate_supplier_code(org),
         )
+        log_audit_event(
+            organization=org,
+            actor_user=self.request.user,
+            event_type="supplier.created",
+            resource_type="supplier",
+            resource_id=supplier.id,
+            summary=f"Created supplier {supplier.display_name}",
+            metadata_json={
+                "supplier_id": str(supplier.id),
+                "display_name": supplier.display_name,
+                "code": supplier.code,
+            },
+            diff_json=None,
+        )
+
+    def perform_update(self, serializer):
+        before = {field: getattr(serializer.instance, field) for field in self.SUPPLIER_AUDIT_FIELDS}
+        supplier = serializer.save()
+        after = {field: getattr(supplier, field) for field in self.SUPPLIER_AUDIT_FIELDS}
+        diff = changed_field_diff(before, after, self.SUPPLIER_AUDIT_FIELDS)
+        if diff:
+            log_audit_event(
+                organization=self.request.org,
+                actor_user=self.request.user,
+                event_type="supplier.updated",
+                resource_type="supplier",
+                resource_id=supplier.id,
+                summary=f"Updated supplier {supplier.display_name}",
+                metadata_json={"supplier_id": str(supplier.id)},
+                diff_json=diff,
+            )
 
     @action(detail=True, methods=["patch"], url_path="deactivate")
     def deactivate(self, request, *args, **kwargs):
@@ -110,6 +160,16 @@ class SupplierViewSet(
         serializer.save()
         supplier.contacts.filter(is_active=True).update(is_active=False)
         supplier.refresh_from_db()
+        log_audit_event(
+            organization=request.org,
+            actor_user=request.user,
+            event_type="supplier.deactivated",
+            resource_type="supplier",
+            resource_id=supplier.id,
+            summary=f"Deactivated supplier {supplier.display_name}",
+            metadata_json={"supplier_id": str(supplier.id)},
+            diff_json={"is_active": {"before": True, "after": False}},
+        )
         return Response(SupplierSerializer(supplier, context={"request": request}).data)
 
     @action(detail=True, methods=["patch"], url_path="reactivate")
@@ -123,6 +183,16 @@ class SupplierViewSet(
         serializer.is_valid(raise_exception=True)
         serializer.save()
         supplier.refresh_from_db()
+        log_audit_event(
+            organization=request.org,
+            actor_user=request.user,
+            event_type="supplier.reactivated",
+            resource_type="supplier",
+            resource_id=supplier.id,
+            summary=f"Reactivated supplier {supplier.display_name}",
+            metadata_json={"supplier_id": str(supplier.id)},
+            diff_json={"is_active": {"before": False, "after": True}},
+        )
         return Response(SupplierSerializer(supplier, context={"request": request}).data)
 
     # -------------------------------------------------------------------------

@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from branches.views import BranchViewSet, NetworkBranchView
+from audit.views import AuditEventExportView, AuditEventListView
 from config.views import HealthView
 from branch_transfers.views import BranchTransferViewSet
 from goods_receipts.views import GoodsReceiptViewSet
@@ -59,6 +60,8 @@ urlpatterns = [
     path("orgs/", OrgListCreateView.as_view(), name="org-list"),
     path("orgs/<uuid:org_id>/governance/", OrgGovernanceView.as_view(), name="org-governance"),
     path("orgs/<uuid:org_id>/settings/", OrgSettingsView.as_view(), name="org-settings"),
+    path("orgs/<uuid:org_id>/audit-events/", AuditEventListView.as_view(), name="org-audit-events"),
+    path("orgs/<uuid:org_id>/audit-events/export/", AuditEventExportView.as_view(), name="org-audit-events-export"),
     path("orgs/<uuid:org_id>/network-branches/", NetworkBranchView.as_view(), name="network-branches"),
     path("orgs/<uuid:org_id>/master-items/", OrgMasterItemView.as_view(), name="org-master-items"),
     path("orgs/<uuid:org_id>/members/search/", MemberSearchView.as_view(), name="member-search"),

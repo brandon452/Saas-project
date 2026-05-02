@@ -39,7 +39,15 @@ class OrganizationSettingsSerializer(serializers.ModelSerializer):
             "branch_transfer_approval_required",
             "stock_take_approval_required",
         ]
-        read_only_fields = ["id", "slug", "parent_company", "parent_company_name", "is_active", "created_at"]
+        read_only_fields = [
+            "id",
+            "slug",
+            "parent_company",
+            "parent_company_name",
+            "is_active",
+            "created_at",
+            "purchase_order_next_number",
+        ]
 
     def validate_default_currency(self, value):
         value = value.strip().upper()
