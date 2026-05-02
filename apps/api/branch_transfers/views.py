@@ -57,7 +57,7 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
         return permissions
 
     def update(self, request, *args, **kwargs):
-        raise MethodNotAllowed("PATCH")
+        raise MethodNotAllowed("PUT")
 
     def partial_update(self, request, *args, **kwargs):
         raise MethodNotAllowed("PATCH")
@@ -276,6 +276,7 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
         return Response(BranchTransferSerializer(transfer).data)
 
     @action(detail=True, methods=["post"], url_path="cancel")
+    @transaction.atomic
     def cancel(self, request, *args, **kwargs):
         transfer = self.get_object()
 
@@ -286,6 +287,7 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        transfer = BranchTransfer.objects.select_for_update().get(pk=transfer.pk)
         if not transfer.can_transition_to(BranchTransfer.CANCELLED):
             return Response(
                 {"detail": f"Cannot cancel a transfer with status {transfer.status}."},

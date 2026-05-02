@@ -10,7 +10,7 @@ from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import MasterItem, OrgItem, StockOnHand
+from inventory.models import BranchItem, MasterItem, OrgItem, StockOnHand
 from inventory.services import record_stock_movement
 from tenancy.models import Organization, OrganizationMember
 
@@ -193,6 +193,7 @@ class NegativeStockApiTests(NegativeStockTestDataMixin, APITestCase):
             code="MAIN",
         )
         self.item = self._create_org_item(self.org, "Lavender Oil", "NEG-API-001")
+        BranchItem.objects.create(org_item=self.item, branch=self.branch, is_active=True)
         self.client.force_authenticate(self.user)
 
     def _url(self):

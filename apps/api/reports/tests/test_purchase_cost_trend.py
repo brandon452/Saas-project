@@ -286,6 +286,20 @@ class PurchaseCostTrendApiTests(APITestCase):
             "from_date must not be after to_date.",
         )
 
+        invalid_supplier = self.client.get(
+            f"{self._url()}?item={self.item.id}&supplier=not-a-uuid",
+            HTTP_HOST=self._host(),
+        )
+        self.assertEqual(invalid_supplier.status_code, 400)
+        self.assertEqual(invalid_supplier.data["supplier"], "Enter a valid ID.")
+
+        invalid_branch = self.client.get(
+            f"{self._url()}?item={self.item.id}&branch=not-a-uuid",
+            HTTP_HOST=self._host(),
+        )
+        self.assertEqual(invalid_branch.status_code, 400)
+        self.assertEqual(invalid_branch.data["branch"], "Enter a valid ID.")
+
     def test_response_shape_ordering_and_content(self):
         self._auth(self.owner)
         response = self.client.get(

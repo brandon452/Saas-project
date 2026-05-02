@@ -91,7 +91,15 @@ class GoodsReceiptViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
                 {"detail": "Too many requests. Please wait before posting another receipt."},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
-        serializer = self.get_serializer(data=request.data)
+        serializer_context = self.get_serializer_context()
+        if request.data.get("receipt_type") == GoodsReceipt.DIRECT_RECEIPT:
+            branch_id = request.data.get("branch")
+            if branch_id:
+                from branches.models import Branch
+                branch = Branch.objects.filter(pk=branch_id, organization=request.org).first()
+                serializer_context["branch"] = branch
+
+        serializer = self.get_serializer(data=request.data, context=serializer_context)
         serializer.is_valid(raise_exception=True)
         idempotency_key = serializer.validated_data.get("idempotency_key")
 

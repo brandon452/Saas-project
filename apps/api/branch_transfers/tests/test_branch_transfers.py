@@ -7,7 +7,7 @@ from rest_framework.test import APITestCase
 
 from branch_transfers.models import BranchTransfer
 from branches.models import Branch
-from inventory.models import InventoryCostState, MasterItem, OrgItem, StockLedger, StockOnHand
+from inventory.models import BranchItem, InventoryCostState, MasterItem, OrgItem, StockLedger, StockOnHand
 from inventory.services import record_stock_movement
 from suppliers.models import Supplier
 from tenancy.models import Organization, OrganizationMember, ParentCompanyMember
@@ -86,6 +86,8 @@ class BranchTransferApiTests(APITestCase):
         self.acme_item_a = self._create_org_item(self.acme, "Acme Item A", "BT-A")
         self.acme_item_b = self._create_org_item(self.acme, "Acme Item B", "BT-B")
         self.globex_item = self._create_org_item(self.globex, "Globex Item", "GBT-1")
+        BranchItem.objects.create(branch=self.acme_from_branch, org_item=self.acme_item_a, is_active=True)
+        BranchItem.objects.create(branch=self.acme_from_branch, org_item=self.acme_item_b, is_active=True)
 
     def _auth(self, user):
         self.client.force_authenticate(user=user)
@@ -219,6 +221,16 @@ class BranchTransferApiTests(APITestCase):
             lines=[{"item": str(self.globex_item.id), "quantity_sent": 1}],
         )
         self.assertEqual(foreign_item.status_code, 400)
+
+        branch_item = BranchItem.objects.get(branch=self.acme_from_branch, org_item=self.acme_item_b)
+        branch_item.is_active = False
+        branch_item.save(update_fields=["is_active"])
+        disabled_at_sender_branch = self._create_transfer(
+            user=self.sender_owner,
+            lines=[{"item": str(self.acme_item_b.id), "quantity_sent": 1}],
+        )
+        self.assertEqual(disabled_at_sender_branch.status_code, 400)
+        self.assertIn("lines", disabled_at_sender_branch.data)
 
         zero_quantity = self._create_transfer(
             user=self.sender_owner,

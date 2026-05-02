@@ -1,6 +1,5 @@
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models
 from django.db.models import Case, Count, DecimalField, ExpressionWrapper, F, IntegerField, OuterRef, Subquery, Sum, Value, When
@@ -12,6 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from branches.models import Branch
 from goods_receipts.models import GoodsReceiptLine
 from inventory.models import (
     InventoryClosePeriod,
@@ -20,6 +20,7 @@ from inventory.models import (
     OrgItem,
     StockOnHand,
 )
+from suppliers.models import Supplier
 from tenancy.models import Organization
 from tenancy.permissions import IsOrgOwnerOrAdmin, IsParentMember, get_parent_membership
 
@@ -139,6 +140,12 @@ class StockValuationView(APIView):
             "average_valuation": avg_val,
         }
 
+    def _parse_pk(self, value, model, field_name):
+        try:
+            return model._meta.pk.to_python(value)
+        except (TypeError, ValueError, DjangoValidationError):
+            raise ValidationError({field_name: "Enter a valid ID."})
+
     def _live_queryset(self, request):
         """Return an annotated StockOnHand queryset with cost data."""
         cost_subquery_base = InventoryCostState.objects.filter(
@@ -164,6 +171,7 @@ class StockValuationView(APIView):
 
         branch_id = request.query_params.get("branch")
         if branch_id:
+            branch_id = self._parse_pk(branch_id, Branch, "branch")
             soh_qs = soh_qs.filter(branch_id=branch_id)
 
         search = request.query_params.get("search", "").strip()
@@ -214,6 +222,7 @@ class StockValuationView(APIView):
 
         branch_id = request.query_params.get("branch")
         if branch_id:
+            branch_id = self._parse_pk(branch_id, Branch, "branch")
             qs = qs.filter(branch_id=branch_id)
 
         search = request.query_params.get("search", "").strip()
@@ -324,6 +333,12 @@ class PurchaseCostTrendView(APIView):
         except (TypeError, ValueError):
             raise ValidationError({"detail": "Invalid date format. Use YYYY-MM-DD."})
 
+    def _parse_pk(self, value, model, field_name):
+        try:
+            return model._meta.pk.to_python(value)
+        except (TypeError, ValueError, DjangoValidationError):
+            raise ValidationError({field_name: "Enter a valid ID."})
+
     def get(self, request, org_id=None, *args, **kwargs):
         item_id = request.query_params.get("item")
         if not item_id:
@@ -372,6 +387,7 @@ class PurchaseCostTrendView(APIView):
 
         supplier_id = request.query_params.get("supplier")
         if supplier_id:
+            supplier_id = self._parse_pk(supplier_id, Supplier, "supplier")
             qs = qs.filter(
                 models.Q(receipt__supplier_id=supplier_id)
                 | models.Q(receipt__purchase_order__supplier_id=supplier_id)
@@ -379,6 +395,7 @@ class PurchaseCostTrendView(APIView):
 
         branch_id = request.query_params.get("branch")
         if branch_id:
+            branch_id = self._parse_pk(branch_id, Branch, "branch")
             qs = qs.filter(receipt__branch_id=branch_id)
 
         total_count = qs.count()

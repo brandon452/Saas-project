@@ -11,7 +11,7 @@ from rest_framework.test import APITestCase
 from branches.models import Branch
 from goods_receipts.models import GoodsReceipt, GoodsReceiptLine
 from goods_receipts.services import post_po_receipt
-from inventory.models import MasterItem, OrgItem, StockLedger, StockOnHand
+from inventory.models import BranchItem, MasterItem, OrgItem, StockLedger, StockOnHand
 from inventory.services import record_stock_movement
 from purchase_orders.models import PurchaseOrder
 from suppliers.models import Supplier
@@ -72,6 +72,8 @@ class GoodsReceiptApiTests(APITestCase):
         self.item_a = self._create_org_item(self.acme, "Item A", "GR-A")
         self.item_b = self._create_org_item(self.acme, "Item B", "GR-B")
         self.other_item = self._create_org_item(self.globex, "Globex Item", "GR-G")
+        BranchItem.objects.create(branch=self.branch, org_item=self.item_a, is_active=True)
+        BranchItem.objects.create(branch=self.branch, org_item=self.item_b, is_active=True)
 
         self.submitted_po = PurchaseOrder.objects.for_org(self.acme).create(
             organization=self.acme,
@@ -479,6 +481,15 @@ class GoodsReceiptApiTests(APITestCase):
         )
         self.assertEqual(other_org_item.status_code, 400)
         self.assertIn("item", other_org_item.data["lines"][0])
+
+        inactive_branch_item = BranchItem.objects.get(branch=self.branch, org_item=self.item_b)
+        inactive_branch_item.is_active = False
+        inactive_branch_item.save(update_fields=["is_active"])
+        branch_inactive_item = self._post_direct(
+            lines=[{"item": self.item_b.id, "quantity_received": 1, "unit_cost": "4.00"}]
+        )
+        self.assertEqual(branch_inactive_item.status_code, 400)
+        self.assertIn("lines", branch_inactive_item.data)
 
         zero_qty = self._post_direct(
             lines=[{"item": self.item_a.id, "quantity_received": 0, "unit_cost": "4.00"}]

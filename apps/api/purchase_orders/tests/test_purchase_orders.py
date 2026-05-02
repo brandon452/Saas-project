@@ -6,7 +6,7 @@ from rest_framework.test import APITestCase
 
 from audit.models import AuditEvent
 from branches.models import Branch
-from inventory.models import MasterItem, OrgItem
+from inventory.models import BranchItem, MasterItem, OrgItem
 from purchase_orders.models import PurchaseOrder
 from purchase_orders.services import generate_po_number
 from suppliers.models import Supplier
@@ -200,6 +200,8 @@ class PurchaseOrderApiTests(APITestCase):
         self.item_a = self._create_org_item(self.acme, "Item A", "PO-A")
         self.item_b = self._create_org_item(self.acme, "Item B", "PO-B")
         self.other_item = self._create_org_item(self.globex, "Globex Item", "GPO-1")
+        BranchItem.objects.create(branch=self.branch, org_item=self.item_a, is_active=True)
+        BranchItem.objects.create(branch=self.branch, org_item=self.item_b, is_active=True)
 
         self.globex_po = PurchaseOrder.objects.for_org(self.globex).create(
             organization=self.globex,
@@ -566,6 +568,15 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertEqual(item_cross_org.status_code, 400)
         self.assertIn("item", item_cross_org.data)
 
+        branch_item = BranchItem.objects.get(branch=self.branch, org_item=self.item_b)
+        branch_item.is_active = False
+        branch_item.save(update_fields=["is_active"])
+        inactive_at_branch = self._add_line(po.id, self.owner, item=str(self.item_b.id))
+        self.assertEqual(inactive_at_branch.status_code, 400)
+        self.assertIn("item", inactive_at_branch.data)
+        branch_item.is_active = True
+        branch_item.save(update_fields=["is_active"])
+
         zero_quantity = self._add_line(po.id, self.owner, item=str(self.item_b.id), ordered_quantity=0)
         self.assertEqual(zero_quantity.status_code, 400)
         self.assertIn("ordered_quantity", zero_quantity.data)
@@ -586,6 +597,23 @@ class PurchaseOrderApiTests(APITestCase):
         po.save(update_fields=["status", "updated_at"])
         submitted_add = self._add_line(po.id, self.owner, item=str(self.item_b.id))
         self.assertEqual(submitted_add.status_code, 400)
+
+    def test_add_line_duplicate_race_returns_validation_error(self):
+        po = PurchaseOrder.objects.for_org(self.acme).create(
+            organization=self.acme,
+            po_number="PO-0001",
+            supplier=self.supplier,
+            branch=self.branch,
+            created_by=self.owner,
+        )
+        self._auth(self.owner)
+
+        first = self._add_line(po.id, self.owner, item=str(self.item_a.id))
+        self.assertEqual(first.status_code, 201)
+
+        second = self._add_line(po.id, self.owner, item=str(self.item_a.id))
+        self.assertEqual(second.status_code, 400)
+        self.assertEqual(second.data["item"][0], "This item already exists on the purchase order.")
 
     def test_update_line_rules(self):
         po = PurchaseOrder.objects.for_org(self.acme).create(

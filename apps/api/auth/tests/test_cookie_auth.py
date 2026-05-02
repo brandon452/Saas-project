@@ -242,3 +242,21 @@ class CookieAuthTests(APITestCase):
 
         self.assertEqual(response.status_code, 200)
         select_for_update.assert_called_once()
+
+    def test_set_password_accept_can_update_names(self):
+        invited_user, token = self._create_password_set_token()
+
+        response = self.client.post(
+            f"/api/auth/set-password/{token.token}/accept/",
+            {
+                "password": "Str0ngPassw0rd!",
+                "first_name": "Renamed",
+                "last_name": "Member",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        invited_user.refresh_from_db()
+        self.assertEqual(invited_user.first_name, "Renamed")
+        self.assertEqual(invited_user.last_name, "Member")

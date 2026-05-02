@@ -1,3 +1,4 @@
+from datetime import date
 from uuid import UUID
 
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -75,6 +76,13 @@ def validate_uuid_query_param(value, field_name):
     except (TypeError, ValueError):
         raise DRFValidationError({field_name: ["Enter a valid UUID."]})
     return value
+
+
+def validate_date_query_param(value, field_name):
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        raise DRFValidationError({field_name: ["Date has wrong format. Use YYYY-MM-DD."]})
 
 
 @extend_schema_view(
@@ -517,10 +525,12 @@ class StockMovementViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedM
 
         from_date = self.request.query_params.get("from_date")
         if from_date:
+            from_date = validate_date_query_param(from_date, "from_date")
             qs = qs.filter(occurred_at__date__gte=from_date)
 
         to_date = self.request.query_params.get("to_date")
         if to_date:
+            to_date = validate_date_query_param(to_date, "to_date")
             qs = qs.filter(occurred_at__date__lte=to_date)
 
         return qs
@@ -572,7 +582,7 @@ class StockMovementViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedM
         return Response(out.data, status=status_code)
 
 
-class StockTakeViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelViewSet):
+class StockTakeViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedMixin, viewsets.ModelViewSet):
     permission_resource = "stock_takes"
     queryset = StockTake.all_objects.none()
     permission_classes = OrgScopedViewSetMixin.permission_classes + [IsOrgOperationalUser]
@@ -606,6 +616,14 @@ class StockTakeViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelVie
                 distinct=True,
             ),
         )
+        if self.request.branch:
+            queryset = queryset.filter(branch=self.request.branch)
+
+        branch_id = self.request.query_params.get("branch")
+        if branch_id:
+            validate_uuid_query_param(branch_id, "branch")
+            queryset = queryset.filter(branch_id=branch_id)
+
         if self.action == "retrieve":
             queryset = queryset.prefetch_related("lines__org_item__master_item")
         return queryset

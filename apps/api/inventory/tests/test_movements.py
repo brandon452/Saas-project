@@ -7,7 +7,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import InventoryClosePeriod, InventoryCostState, MasterItem, OrgItem, StockLedger, StockOnHand
+from inventory.models import BranchItem, InventoryClosePeriod, InventoryCostState, MasterItem, OrgItem, StockLedger, StockOnHand
 from inventory.services import record_stock_movement
 from tenancy.models import Organization, OrganizationMember
 
@@ -34,6 +34,7 @@ class StockMovementServiceTests(TransactionTestCase):
             code="MAIN",
         )
         self.item = self._create_org_item(self.org, "Lavender Oil", "ACME-001")
+        BranchItem.objects.create(org_item=self.item, branch=self.branch, is_active=True)
 
     def _receipt(self, quantity, *, unit_cost="10.0000", item=None, occurred_at=None, idempotency_key=None):
         return record_stock_movement(
@@ -233,6 +234,7 @@ class StockMovementApiTests(APITestCase):
             code="MAIN",
         )
         self.item = self._create_org_item(self.org, "Lavender Oil", "ACME-001")
+        BranchItem.objects.create(org_item=self.item, branch=self.branch, is_active=True)
 
     def _url(self):
         return f"/api/orgs/{self.org.id}/inventory/movements/"
@@ -294,3 +296,74 @@ class StockMovementApiTests(APITestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["unit_cost"][0], "unit_cost must be greater than zero.")
+
+    def test_list_rejects_invalid_from_date(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.get(
+            f"{self._url()}?from_date=not-a-date",
+            HTTP_HOST="acme.localhost:8000",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["from_date"][0], "Date has wrong format. Use YYYY-MM-DD.")
+
+    def test_list_rejects_invalid_to_date(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.get(
+            f"{self._url()}?to_date=2026-99-99",
+            HTTP_HOST="acme.localhost:8000",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["to_date"][0], "Date has wrong format. Use YYYY-MM-DD.")
+
+    def test_create_rejects_inactive_item(self):
+        self.item.is_active = False
+        self.item.save(update_fields=["is_active"])
+        response = self._post(
+            {
+                "item": str(self.item.id),
+                "quantity": "1.0000",
+                "movement_type": "RECEIPT",
+                "unit_cost": "1.0000",
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("item", response.data)
+
+    def test_create_rejects_item_not_enabled_for_branch(self):
+        BranchItem.objects.filter(org_item=self.item, branch=self.branch).delete()
+        response = self._post(
+            {
+                "item": str(self.item.id),
+                "quantity": "1.0000",
+                "movement_type": "RECEIPT",
+                "unit_cost": "1.0000",
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["item"][0], "This item is not enabled for the selected branch.")
+
+    def test_create_rejects_item_with_inactive_branch_item(self):
+        branch_item = BranchItem.objects.get(org_item=self.item, branch=self.branch)
+        branch_item.is_active = False
+        branch_item.save(update_fields=["is_active"])
+        response = self._post(
+            {
+                "item": str(self.item.id),
+                "quantity": "1.0000",
+                "movement_type": "RECEIPT",
+                "unit_cost": "1.0000",
+            }
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["item"][0], "This item is not enabled for the selected branch.")
+
+    def test_create_accepts_item_with_active_branch_item(self):
+        response = self._post(
+            {
+                "item": str(self.item.id),
+                "quantity": "1.0000",
+                "movement_type": "RECEIPT",
+                "unit_cost": "1.0000",
+            }
+        )
+        self.assertEqual(response.status_code, 201)

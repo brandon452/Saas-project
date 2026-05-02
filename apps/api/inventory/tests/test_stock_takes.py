@@ -2,6 +2,7 @@ from decimal import Decimal
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import TransactionTestCase
 from rest_framework.test import APITestCase
 
@@ -526,6 +527,37 @@ class StockTakeApiTests(APITestCase):
         self.assertIsNone(second_line["counted_quantity"])
         self.assertIsNone(second_line["variance_preview"])
 
+    def test_staff_access_is_branch_scoped(self):
+        branch_one_take = StockTake.objects.create(
+            organization=self.org,
+            branch=self.branch,
+            created_by=self.owner,
+        )
+        branch_two_take = StockTake.objects.create(
+            organization=self.org,
+            branch=self.branch_two,
+            created_by=self.owner,
+        )
+
+        self._auth(self.staff)
+        list_response = self.client.get(self._base_url(), HTTP_HOST=self._host())
+        self.assertEqual(list_response.status_code, 200)
+        ids = {row["id"] for row in list_response.data["results"]}
+        self.assertIn(str(branch_one_take.id), ids)
+        self.assertNotIn(str(branch_two_take.id), ids)
+
+        own_branch_retrieve = self.client.get(
+            f"{self._base_url()}{branch_one_take.id}/",
+            HTTP_HOST=self._host(),
+        )
+        self.assertEqual(own_branch_retrieve.status_code, 200)
+
+        other_branch_retrieve = self.client.get(
+            f"{self._base_url()}{branch_two_take.id}/",
+            HTTP_HOST=self._host(),
+        )
+        self.assertEqual(other_branch_retrieve.status_code, 404)
+
     def test_update_line_permissions_and_validation(self):
         stock_take = StockTake.objects.create(organization=self.org, branch=self.branch, created_by=self.owner)
         start_stock_take(stock_take, self.owner)
@@ -692,3 +724,16 @@ class StockTakeServiceTests(TransactionTestCase):
         self.assertTrue(stock_take_lock.called)
         self.assertTrue(line_lock.called)
         self.assertTrue(soh_lock.called)
+
+    def test_submit_rejects_stock_take_with_no_lines(self):
+        stock_take = StockTake.objects.create(
+            organization=self.org,
+            branch=self.branch,
+            created_by=self.user,
+            status=StockTake.IN_PROGRESS,
+        )
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Cannot submit a stock take with no line items. Start the stock take to generate lines first.",
+        ):
+            submit_stock_take(stock_take, self.user)

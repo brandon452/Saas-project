@@ -28,7 +28,8 @@ class BranchTransferLineWriteSerializer(serializers.ModelSerializer):
         request = self.context["request"]
         if value.organization != request.org:
             raise serializers.ValidationError("Item does not belong to the sending organisation.")
-        branch = getattr(request, "branch", None)
+        from_branch = self.context.get("from_branch")
+        branch = from_branch
         if branch is not None:
             if not BranchItem.objects.filter(
                 org_item=value,
@@ -123,7 +124,8 @@ class BranchTransferCreateSerializer(serializers.ModelSerializer):
         )
 
     def validate(self, attrs):
-        if attrs.get("from_branch") == attrs.get("to_branch"):
+        from_branch = attrs.get("from_branch")
+        if from_branch == attrs.get("to_branch"):
             raise serializers.ValidationError("from_branch and to_branch must be different.")
 
         lines = attrs.get("lines", [])
@@ -135,6 +137,16 @@ class BranchTransferCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"lines": "Duplicate items in the same transfer are not allowed."}
             )
+
+        for line in lines:
+            if not BranchItem.objects.filter(
+                org_item=line["item"],
+                branch=from_branch,
+                is_active=True,
+            ).exists():
+                raise serializers.ValidationError(
+                    {"lines": f"Item {line['item'].pk} is not enabled at the sending branch."}
+                )
 
         return attrs
 

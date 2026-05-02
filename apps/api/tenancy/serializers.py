@@ -87,8 +87,8 @@ class ParentCompanySerializer(serializers.ModelSerializer):
 class MemberUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "username", "email"]
-        read_only_fields = ["id", "username", "email"]
+        fields = ["id", "username", "email", "first_name", "last_name"]
+        read_only_fields = ["id", "username", "email", "first_name", "last_name"]
 
 
 class UserSearchSerializer(serializers.Serializer):
@@ -240,8 +240,8 @@ class MemberUpdateSerializer(serializers.ModelSerializer):
 class ParentMemberUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "username", "email"]
-        read_only_fields = ["id", "username", "email"]
+        fields = ["id", "username", "email", "first_name", "last_name"]
+        read_only_fields = ["id", "username", "email", "first_name", "last_name"]
 
 
 class ParentMemberSerializer(serializers.ModelSerializer):

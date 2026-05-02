@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -367,7 +368,7 @@ class StockMovementSerializer(serializers.Serializer):
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
         if request and getattr(request, "org", None):
-            self.fields["item"].queryset = OrgItem.objects.for_org(request.org)
+            self.fields["item"].queryset = OrgItem.objects.for_org(request.org).filter(is_active=True)
 
     def validate(self, data):
         request = self.context["request"]
@@ -386,6 +387,18 @@ class StockMovementSerializer(serializers.Serializer):
             if branch != membership.assigned_branch:
                 raise serializers.ValidationError(
                     {"branch": "You can only post movements to your assigned branch."}
+                )
+
+        item = data.get("item")
+        if item is not None and branch is not None:
+            branch_item_enabled = BranchItem.objects.filter(
+                org_item=item,
+                branch=branch,
+                is_active=True,
+            ).exists()
+            if not branch_item_enabled:
+                raise serializers.ValidationError(
+                    {"item": "This item is not enabled for the selected branch."}
                 )
 
         unit_cost = data.get("unit_cost")

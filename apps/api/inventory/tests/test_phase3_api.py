@@ -6,7 +6,7 @@ from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import MasterItem, OrgItem, StockLedger
+from inventory.models import BranchItem, MasterItem, OrgItem, StockLedger
 from inventory.services import record_stock_movement
 from tenancy.models import Organization, OrganizationMember
 
@@ -51,6 +51,7 @@ class InventoryPhase3ApiTests(APITestCase):
         self.acme_item_1 = self._create_org_item(self.acme, "Acme Item A", "ACME-A")
         self.acme_item_2 = self._create_org_item(self.acme, "Acme Item B", "ACME-B")
         self.globex_item = self._create_org_item(self.globex, "Globex Item", "GLOBEX-A")
+        BranchItem.objects.create(org_item=self.acme_item_1, branch=self.acme_branch, is_active=True)
 
     def _auth(self, user):
         self.client.force_authenticate(user=user)

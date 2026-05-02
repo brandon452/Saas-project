@@ -208,3 +208,16 @@ class StockValuationApiTests(APITestCase):
         self.assertEqual(search_response.status_code, 200)
         self.assertEqual(len(search_response.data["results"]), 1)
         self.assertEqual(search_response.data["results"][0]["item_id"], str(self.item_a.id))
+
+    def test_invalid_branch_filter_returns_400_live_and_snapshot(self):
+        self._auth(self.owner)
+
+        live_response = self.client.get(f"{self._url()}?branch=not-a-valid-id")
+        self.assertEqual(live_response.status_code, 400)
+        self.assertEqual(live_response.data["branch"], "Enter a valid ID.")
+
+        snapshot_response = self.client.get(
+            f"{self._url()}?period_id={self.closed_period.id}&branch=not-a-valid-id"
+        )
+        self.assertEqual(snapshot_response.status_code, 400)
+        self.assertEqual(snapshot_response.data["branch"], "Enter a valid ID.")

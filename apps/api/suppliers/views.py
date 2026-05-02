@@ -1,10 +1,12 @@
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from rest_framework import mixins, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
 from tenancy.mixins import OrgScopedViewSetMixin
+from tenancy.models import Organization
 from tenancy.permissions import RolePolicyMixin, get_org_membership, get_parent_membership
 from audit.services import changed_field_diff, log_audit_event
 
@@ -96,6 +98,8 @@ class SupplierViewSet(
         """Return the next available SUP-NNNN code for the org, race-safe."""
         import re
         with transaction.atomic():
+            # Lock the org row so "first supplier in org" creation cannot race.
+            Organization.objects.select_for_update().get(pk=org.pk)
             existing = (
                 Supplier.objects.select_for_update()
                 .filter(organization=org)
@@ -108,6 +112,14 @@ class SupplierViewSet(
                 if match:
                     max_suffix = max(max_suffix, int(match.group(1)))
             return f"SUP-{max_suffix + 1:04d}"
+
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except IntegrityError:
+            raise DRFValidationError(
+                {"detail": ["Could not allocate a unique supplier code. Please retry."]}
+            )
 
     def perform_create(self, serializer):
         org = self.request.org
@@ -151,6 +163,7 @@ class SupplierViewSet(
     @action(detail=True, methods=["patch"], url_path="deactivate")
     def deactivate(self, request, *args, **kwargs):
         supplier = self.get_object()
+        before_active = supplier.is_active
         serializer = self.get_serializer(
             supplier,
             data={"is_active": False},
@@ -168,13 +181,14 @@ class SupplierViewSet(
             resource_id=supplier.id,
             summary=f"Deactivated supplier {supplier.display_name}",
             metadata_json={"supplier_id": str(supplier.id)},
-            diff_json={"is_active": {"before": True, "after": False}},
+            diff_json={"is_active": {"before": before_active, "after": supplier.is_active}},
         )
         return Response(SupplierSerializer(supplier, context={"request": request}).data)
 
     @action(detail=True, methods=["patch"], url_path="reactivate")
     def reactivate(self, request, *args, **kwargs):
         supplier = self.get_object()
+        before_active = supplier.is_active
         serializer = self.get_serializer(
             supplier,
             data={"is_active": True},
@@ -191,7 +205,7 @@ class SupplierViewSet(
             resource_id=supplier.id,
             summary=f"Reactivated supplier {supplier.display_name}",
             metadata_json={"supplier_id": str(supplier.id)},
-            diff_json={"is_active": {"before": False, "after": True}},
+            diff_json={"is_active": {"before": before_active, "after": supplier.is_active}},
         )
         return Response(SupplierSerializer(supplier, context={"request": request}).data)
 

@@ -182,7 +182,7 @@ class DirectReceiptLineWriteSerializer(serializers.Serializer):
         request = self.context["request"]
         if value.organization != request.org:
             raise serializers.ValidationError("Item does not belong to this organisation.")
-        branch = getattr(request, "branch", None)
+        branch = self.context.get("branch")
         if branch is not None:
             if not BranchItem.objects.filter(
                 org_item=value,
@@ -227,6 +227,7 @@ class DirectReceiptCreateSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         lines = attrs.get("lines", [])
+        branch = attrs.get("branch")
 
         if not lines:
             raise serializers.ValidationError({"lines": "A goods receipt must have at least one line."})
@@ -236,6 +237,17 @@ class DirectReceiptCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"lines": "Duplicate items in the same receipt are not allowed."}
             )
+
+        if branch is not None:
+            for line in lines:
+                if not BranchItem.objects.filter(
+                    org_item=line["item"],
+                    branch=branch,
+                    is_active=True,
+                ).exists():
+                    raise serializers.ValidationError(
+                        {"lines": f"Item {line['item'].pk} is not enabled at this branch."}
+                    )
 
         return attrs
 

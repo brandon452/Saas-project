@@ -41,7 +41,8 @@ class PurchaseOrderLineWriteSerializer(serializers.ModelSerializer):
         request = self.context["request"]
         if value.organization != request.org:
             raise serializers.ValidationError("Item does not belong to this organisation.")
-        branch = getattr(request, "branch", None)
+        po = self.context["purchase_order"]
+        branch = po.branch
         if branch is not None:
             if not BranchItem.objects.filter(
                 org_item=value,

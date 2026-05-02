@@ -290,6 +290,10 @@ def submit_stock_take(stock_take, performed_by):
         raise ValidationError(f"Cannot submit a stock take with status {stock_take.status}.")
 
     all_lines = StockTakeLine.objects.select_for_update().filter(stock_take=stock_take)
+    if not all_lines.exists():
+        raise ValidationError(
+            "Cannot submit a stock take with no line items. Start the stock take to generate lines first."
+        )
     if all_lines.exists() and not all_lines.filter(counted_quantity__isnull=False).exists():
         raise ValidationError(
             "Cannot submit a stock take where no items have been counted. "

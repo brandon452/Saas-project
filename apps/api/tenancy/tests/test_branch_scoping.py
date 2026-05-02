@@ -6,7 +6,7 @@ from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
-from inventory.models import MasterItem, OrgItem, StockLedger
+from inventory.models import BranchItem, MasterItem, OrgItem, StockLedger
 from inventory.services import record_stock_movement
 from tenancy.models import Organization, OrganizationMember
 
@@ -48,6 +48,8 @@ class BranchScopingTests(APITestCase):
         )
 
         self.item = self._create_org_item(self.org, "Item", "ITM-1")
+        BranchItem.objects.create(org_item=self.item, branch=self.branch_a, is_active=True)
+        BranchItem.objects.create(org_item=self.item, branch=self.branch_b, is_active=True)
 
         record_stock_movement(
             org=self.org,

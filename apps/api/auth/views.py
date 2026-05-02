@@ -218,6 +218,8 @@ class PasswordSetAcceptView(AuthCookieMixin, APIView):
             return Response({"detail": "Too many requests."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         password = request.data.get("password", "")
+        first_name = (request.data.get("first_name") or "").strip()
+        last_name = (request.data.get("last_name") or "").strip()
         if not password:
             return Response({"detail": "Password is required."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -252,7 +254,14 @@ class PasswordSetAcceptView(AuthCookieMixin, APIView):
 
             # Lock the token row so only one request can consume it.
             user.set_password(password)
-            user.save(update_fields=["password"])
+            update_fields = ["password"]
+            if first_name:
+                user.first_name = first_name
+                update_fields.append("first_name")
+            if last_name:
+                user.last_name = last_name
+                update_fields.append("last_name")
+            user.save(update_fields=update_fields)
             pst.used_at = now()
             pst.save(update_fields=["used_at"])
 

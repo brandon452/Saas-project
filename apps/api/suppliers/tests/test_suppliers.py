@@ -3,7 +3,9 @@ from django.db import IntegrityError, connection, transaction
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APITestCase
+from unittest.mock import patch
 
+from audit.models import AuditEvent
 from suppliers.models import Supplier, SupplierContact
 from tenancy.models import Organization, OrganizationMember, ParentCompanyMember
 from tenancy.permissions import get_org_membership
@@ -464,6 +466,54 @@ class SupplierApiTests(SupplierTestBase):
         self._auth(self.outsider)
         r = self.client.get(self._url(), HTTP_HOST=self._host())
         self.assertEqual(r.status_code, 403)
+
+    def test_create_handles_supplier_code_conflict_as_400(self):
+        self._auth(self.owner)
+        self.active_supplier.code = "SUP-0001"
+        self.active_supplier.save(update_fields=["code"])
+        with patch("suppliers.views.SupplierViewSet._generate_supplier_code", return_value="SUP-0001"):
+            response = self.client.post(
+                self._url(),
+                {"display_name": "Code Conflict Supplier"},
+                format="json",
+                HTTP_HOST=self._host(),
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("detail", response.data)
+
+    def test_deactivate_audit_diff_uses_actual_before_and_after(self):
+        self._auth(self.owner)
+        response = self.client.patch(
+            self._url(self.inactive_supplier.id, "deactivate/"),
+            {},
+            format="json",
+            HTTP_HOST=self._host(),
+        )
+        self.assertEqual(response.status_code, 200)
+        event = AuditEvent.objects.filter(
+            organization=self.acme,
+            event_type="supplier.deactivated",
+            resource_id=str(self.inactive_supplier.id),
+        ).latest("occurred_at")
+        self.assertEqual(event.diff_json["is_active"]["before"], False)
+        self.assertEqual(event.diff_json["is_active"]["after"], False)
+
+    def test_reactivate_audit_diff_uses_actual_before_and_after(self):
+        self._auth(self.owner)
+        response = self.client.patch(
+            self._url(self.active_supplier.id, "reactivate/"),
+            {},
+            format="json",
+            HTTP_HOST=self._host(),
+        )
+        self.assertEqual(response.status_code, 200)
+        event = AuditEvent.objects.filter(
+            organization=self.acme,
+            event_type="supplier.reactivated",
+            resource_id=str(self.active_supplier.id),
+        ).latest("occurred_at")
+        self.assertEqual(event.diff_json["is_active"]["before"], True)
+        self.assertEqual(event.diff_json["is_active"]["after"], True)
 
 
 # ---------------------------------------------------------------------------

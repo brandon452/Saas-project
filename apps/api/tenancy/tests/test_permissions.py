@@ -71,6 +71,7 @@ class RolePolicyTests(APITestCase):
 
         self.acme_item = self._create_org_item(self.acme, "Acme Item", "ACME-1")
         self.globex_item = self._create_org_item(self.globex, "Globex Item", "GLOB-1")
+        BranchItem.objects.create(org_item=self.acme_item, branch=self.acme_branch, is_active=True)
 
         record_stock_movement(
             org=self.acme,

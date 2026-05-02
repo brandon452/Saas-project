@@ -194,7 +194,12 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
             context={"request": request, "purchase_order": po},
         )
         serializer.is_valid(raise_exception=True)
-        serializer.save(purchase_order=po)
+        try:
+            serializer.save(purchase_order=po)
+        except IntegrityError as exc:
+            if "unique_item_per_po" in str(exc):
+                raise DRFValidationError({"item": ["This item already exists on the purchase order."]})
+            raise
         return Response(
             PurchaseOrderLineSerializer(serializer.instance).data,
             status=status.HTTP_201_CREATED,
@@ -224,7 +229,12 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
             context={"request": request, "purchase_order": po},
         )
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        try:
+            serializer.save()
+        except IntegrityError as exc:
+            if "unique_item_per_po" in str(exc):
+                raise DRFValidationError({"item": ["This item already exists on the purchase order."]})
+            raise
         return Response(PurchaseOrderLineSerializer(serializer.instance).data)
 
     @action(detail=True, methods=["delete"], url_path=r"lines/(?P<line_id>[^/.]+)/remove")
