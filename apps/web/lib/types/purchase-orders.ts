@@ -17,6 +17,7 @@ export interface POLine {
   ordered_quantity: number
   unit_price: string
   received_quantity: number | null
+  warnings?: string[]
 }
 
 export interface POReceiptSummary {
@@ -37,6 +38,7 @@ export interface PurchaseOrder {
   lines: POLine[]
   receipts: POReceiptSummary[]
   created_by: number | null
+  created_by_display: string | null
   created_at: string
   updated_at: string
 }

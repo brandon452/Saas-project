@@ -71,6 +71,14 @@ class PurchaseOrderLineWriteSerializer(serializers.ModelSerializer):
 class PurchaseOrderSerializer(serializers.ModelSerializer):
     lines = PurchaseOrderLineSerializer(many=True, read_only=True)
     receipts = POReceiptSummarySerializer(many=True, read_only=True)
+    created_by_display = serializers.SerializerMethodField()
+
+    def get_created_by_display(self, obj):
+        user = obj.created_by
+        if user is None:
+            return None
+        full_name = user.get_full_name()
+        return full_name if full_name else user.email
 
     class Meta:
         model = PurchaseOrder
@@ -84,6 +92,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             "lines",
             "receipts",
             "created_by",
+            "created_by_display",
             "created_at",
             "updated_at",
         ]
@@ -94,6 +103,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             "lines",
             "receipts",
             "created_by",
+            "created_by_display",
             "created_at",
             "updated_at",
         ]

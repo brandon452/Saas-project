@@ -3,7 +3,9 @@
 import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
+import { ScanLine } from "lucide-react"
 
+import { PickScanMode } from "@/components/scan-modes/PickScanMode"
 import { SaleLineEditor, type SaleLineDraft } from "@/components/quick-sales/SaleLineEditor"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -41,6 +43,7 @@ export default function NewQuickSalePage() {
   const [occurredAt, setOccurredAt] = useState(toDateInputString(new Date()))
   const [lines, setLines] = useState<SaleLineDraft[]>([{ itemId: "", quantity: "", unitPrice: "" }])
   const [submitError, setSubmitError] = useState("")
+  const [scanModeOpen, setScanModeOpen] = useState(false)
 
   useEffect(() => {
     if (!orgId) return
@@ -214,35 +217,66 @@ export default function NewQuickSalePage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Sale lines</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <SaleLineEditor
-            orgId={orgId}
-            branchId={branchId}
-            lines={lines}
-            onChange={setLines}
+      {branchId && (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant={scanModeOpen ? "ghost" : "outline"}
+            size="sm"
+            onClick={() => setScanModeOpen((v) => !v)}
             disabled={createQuickSale.isPending}
-          />
-          <p className="text-sm font-medium">Total: {runningTotal.toFixed(2)}</p>
-        </CardContent>
-      </Card>
+          >
+            <ScanLine className="mr-2 h-4 w-4" />
+            {scanModeOpen ? "Manual Mode" : "Scan Mode"}
+          </Button>
+        </div>
+      )}
 
-      {submitError ? <p className="text-sm text-red-600">{submitError}</p> : null}
+      {scanModeOpen && branchId && (
+        <PickScanMode
+          orgId={orgId}
+          branchId={branchId}
+          isPending={createQuickSale.isPending}
+          onSubmit={async (payload) => {
+            const sale = await createQuickSale.mutateAsync(payload)
+            router.push(`/orgs/${orgId}/quick-sales/${sale.id}`)
+          }}
+        />
+      )}
 
-      <div className="flex items-center justify-end gap-3">
-        <Link
-          href={`/orgs/${orgId}/quick-sales`}
-          className="inline-flex h-10 items-center justify-center rounded-md px-4 text-sm font-medium text-muted-foreground hover:text-foreground"
-        >
-          Cancel
-        </Link>
-        <Button onClick={() => void handleSubmit()} disabled={createQuickSale.isPending}>
-          {createQuickSale.isPending ? "Saving..." : "Confirm Sale"}
-        </Button>
-      </div>
+      {!scanModeOpen && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Sale lines</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <SaleLineEditor
+                orgId={orgId}
+                branchId={branchId}
+                lines={lines}
+                onChange={setLines}
+                disabled={createQuickSale.isPending}
+              />
+              <p className="text-sm font-medium">Total: {runningTotal.toFixed(2)}</p>
+            </CardContent>
+          </Card>
+
+          {submitError ? <p className="text-sm text-red-600">{submitError}</p> : null}
+
+          <div className="flex items-center justify-end gap-3">
+            <Link
+              href={`/orgs/${orgId}/quick-sales`}
+              className="inline-flex h-10 items-center justify-center rounded-md px-4 text-sm font-medium text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </Link>
+            <Button onClick={() => void handleSubmit()} disabled={createQuickSale.isPending}>
+              {createQuickSale.isPending ? "Saving..." : "Confirm Sale"}
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   )
 }

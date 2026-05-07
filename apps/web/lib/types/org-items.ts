@@ -7,6 +7,7 @@ export interface OrgItem {
   sku: string
   is_active: boolean
   created_at: string
+  preferred_supplier: { id: number; display_name: string } | null
 }
 
 export interface OrgItemListResponse {
@@ -24,4 +25,14 @@ export interface ActivateItemPayload {
 export interface UpdateOrgItemPayload {
   name?: string
   is_active?: boolean
+}
+
+export interface BulkActivateOrgItemsPayload {
+  master_items: string[]
+}
+
+export interface BulkActivateOrgItemsResponse {
+  activated: number
+  already_active: number
+  total: number
 }

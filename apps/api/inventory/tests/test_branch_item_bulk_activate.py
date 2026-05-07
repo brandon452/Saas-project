@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
+from audit.models import AuditEvent
 from branches.models import Branch
 from inventory.models import BranchItem, MasterItem, OrgItem
 from tenancy.models import Organization, OrganizationMember
@@ -224,6 +225,28 @@ class BranchItemBulkActivateApiTests(APITestCase):
         self.assertEqual(response.data["activated"], 1)
         # No duplicate BranchItem records
         self.assertEqual(BranchItem.objects.filter(org_item=self.item1, branch=self.branch_a).count(), 1)
+
+    def test_audit_event_created_on_success(self):
+        self._auth(self.owner)
+        before = AuditEvent.objects.filter(
+            organization=self.acme, event_type="branch_item.bulk_activated"
+        ).count()
+        self._post({"branch": str(self.branch_a.id), "org_items": [str(self.item1.id)]})
+        after = AuditEvent.objects.filter(
+            organization=self.acme, event_type="branch_item.bulk_activated"
+        ).count()
+        self.assertEqual(after, before + 1)
+
+    def test_no_audit_event_on_validation_failure(self):
+        self._auth(self.owner)
+        before = AuditEvent.objects.filter(
+            organization=self.acme, event_type="branch_item.bulk_activated"
+        ).count()
+        self._post({"branch": str(self.branch_a.id), "org_items": []})
+        after = AuditEvent.objects.filter(
+            organization=self.acme, event_type="branch_item.bulk_activated"
+        ).count()
+        self.assertEqual(after, before)
 
     def test_branch_items_at_other_branch_not_affected(self):
         # item1 is active at branch_b — should not be touched

@@ -2,13 +2,17 @@
 
 import Link from "next/link"
 import { useParams } from "next/navigation"
+import { useState } from "react"
+import { ScanLine } from "lucide-react"
 
+import { CountScanMode } from "@/components/scan-modes/CountScanMode"
 import { StockTakeHeader } from "@/components/stock-takes/StockTakeHeader"
 import { StockTakeLinesTable } from "@/components/stock-takes/StockTakeLinesTable"
 import { StockTakeSummaryCards } from "@/components/stock-takes/StockTakeSummaryCards"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useStockTakeMutations } from "@/lib/hooks/stock-takes/useStockTakeMutations"
 import { useStockTakeDetail } from "@/lib/hooks/stock-takes/useStockTakeDetail"
 import { useOrg } from "@/lib/hooks/useOrg"
 
@@ -17,6 +21,8 @@ export default function StockTakeDetailPage() {
   const { orgId } = useOrg()
   const stockTakeId = params?.stockTakeId ?? ""
   const stockTakeQuery = useStockTakeDetail(orgId, stockTakeId)
+  const { bulkUpdateStockTakeLines } = useStockTakeMutations(orgId)
+  const [scanModeOpen, setScanModeOpen] = useState(false)
 
   if (stockTakeQuery.isLoading) {
     return <StockTakeDetailSkeleton />
@@ -90,6 +96,35 @@ export default function StockTakeDetailPage() {
       />
 
       <StockTakeSummaryCards lines={stockTake.lines} />
+
+      {stockTake.status === "IN_PROGRESS" && (
+        <div className="flex justify-end">
+          <Button
+            variant={scanModeOpen ? "ghost" : "outline"}
+            size="sm"
+            onClick={() => setScanModeOpen((v) => !v)}
+          >
+            <ScanLine className="mr-2 h-4 w-4" />
+            {scanModeOpen ? "Close Scan Mode" : "Scan Mode"}
+          </Button>
+        </div>
+      )}
+
+      {scanModeOpen && stockTake.status === "IN_PROGRESS" && (
+        <CountScanMode
+          orgId={orgId}
+          branchId={typeof stockTake.branch === "string" ? stockTake.branch : stockTake.branch.id}
+          stockTakeId={stockTake.id}
+          onBulkUpdate={async (lines) => {
+            await bulkUpdateStockTakeLines.mutateAsync({
+              stockTakeId: stockTake.id,
+              payload: { lines },
+            })
+            await stockTakeQuery.refetch()
+          }}
+          isPending={bulkUpdateStockTakeLines.isPending}
+        />
+      )}
 
       <Card>
         <CardHeader>

@@ -27,6 +27,7 @@ import { usePurchaseOrder } from "@/lib/hooks/purchase-orders/usePurchaseOrder"
 import { usePOSuppliers } from "@/lib/hooks/purchase-orders/usePOSuppliers"
 import { useOrg } from "@/lib/hooks/useOrg"
 import { calculatePOTotal, formatPOValue } from "@/lib/utils/po"
+import { downloadPdf } from "@/lib/utils/download-pdf"
 
 export default function PurchaseOrderDetailPage() {
   const router = useRouter()
@@ -39,9 +40,14 @@ export default function PurchaseOrderDetailPage() {
   const branchesQuery = usePOBranches(orgId)
   const { updatePO, submitPO, cancelPO, addLine, updateLine, removeLine } = usePOMutations(orgId)
 
+  const [pdfStatus, setPdfStatus] = useState<"idle" | "loading" | "success" | "error">("idle")
+  const [pdfError, setPdfError] = useState<string | null>(null)
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false)
+  const [submitError, setSubmitError] = useState("")
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
+  const [cancelError, setCancelError] = useState("")
   const [lineActionError, setLineActionError] = useState("")
+  const [lineActionWarning, setLineActionWarning] = useState("")
   const [headerError, setHeaderError] = useState("")
   const [editSupplier, setEditSupplier] = useState("")
   const [editBranch, setEditBranch] = useState("")
@@ -120,7 +126,8 @@ export default function PurchaseOrderDetailPage() {
     if (!po) return
     try {
       setLineActionError("")
-      await addLine.mutateAsync({
+      setLineActionWarning("")
+      const result = await addLine.mutateAsync({
         poId: po.id,
         data: {
           item: payload.itemId,
@@ -128,8 +135,25 @@ export default function PurchaseOrderDetailPage() {
           unit_price: payload.unit_price,
         },
       })
+      if (result.warnings?.length) {
+        setLineActionWarning(result.warnings.join(" "))
+      }
     } catch {
       setLineActionError("Failed to add the new line.")
+    }
+  }
+
+  async function handleDownloadPdf() {
+    if (!po || pdfStatus === "loading") return
+    setPdfStatus("loading")
+    setPdfError(null)
+    const result = await downloadPdf(`orgs/${orgId}/purchase-orders/${po.id}/export/pdf/`)
+    if (result.ok) {
+      setPdfStatus("success")
+      setTimeout(() => setPdfStatus("idle"), 1500)
+    } else {
+      setPdfError(result.error ?? "Download failed.")
+      setPdfStatus("error")
     }
   }
 
@@ -249,9 +273,9 @@ export default function PurchaseOrderDetailPage() {
               </div>
             ) : (
               <div className="grid gap-2 text-sm text-muted-foreground">
-                <p>Supplier: {supplierMap.get(po.supplier) ?? "—"}</p>
+                <p>Supplier: {supplierMap.get(String(po.supplier)) ?? "—"}</p>
                 <p>Branch: {branchMap.get(po.branch) ?? "—"}</p>
-                <p>Created by: {po.created_by ?? "—"}</p>
+                <p>Created by: {po.created_by_display ?? "—"}</p>
                 <p>Created at: {new Date(po.created_at).toLocaleString()}</p>
               </div>
             )}
@@ -262,24 +286,37 @@ export default function PurchaseOrderDetailPage() {
               <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Total value</p>
               <p className="text-2xl font-semibold">{formatPOValue(calculatePOTotal(po.lines))}</p>
             </div>
-            <div className="flex gap-3">
-              {po.status === "DRAFT" ? (
-                <>
-                  <Button disabled={isActionPending} onClick={() => setSubmitDialogOpen(true)}>
-                    Submit
-                  </Button>
-                  {canAccess(["OWNER"]) ? (
-                    <Button variant="ghost" disabled={isActionPending} onClick={() => setCancelDialogOpen(true)}>
-                      Cancel
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex gap-3">
+                {po.status === "DRAFT" ? (
+                  <>
+                    <Button disabled={isActionPending} onClick={() => setSubmitDialogOpen(true)}>
+                      Submit
                     </Button>
-                  ) : null}
-                </>
-              ) : null}
-              {po.status === "SUBMITTED" && canAccess(["OWNER"]) ? (
-                <Button variant="ghost" disabled={isActionPending} onClick={() => setCancelDialogOpen(true)}>
-                  Cancel
+                    {canAccess(["OWNER"]) ? (
+                      <Button variant="ghost" disabled={isActionPending} onClick={() => setCancelDialogOpen(true)}>
+                        Cancel
+                      </Button>
+                    ) : null}
+                  </>
+                ) : null}
+                {po.status === "SUBMITTED" && canAccess(["OWNER"]) ? (
+                  <Button variant="ghost" disabled={isActionPending} onClick={() => setCancelDialogOpen(true)}>
+                    Cancel
+                  </Button>
+                ) : null}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pdfStatus === "loading"}
+                  onClick={() => void handleDownloadPdf()}
+                >
+                  {pdfStatus === "loading" ? "Generating…" : pdfStatus === "success" ? "Downloaded!" : "Download PDF"}
                 </Button>
-              ) : null}
+              </div>
+              {pdfStatus === "error" && pdfError
+                ? <p className="text-sm text-destructive">{pdfError}</p>
+                : null}
             </div>
           </div>
         </CardHeader>
@@ -309,6 +346,7 @@ export default function PurchaseOrderDetailPage() {
             onRemoveLine={handleRemoveLine}
           />
           {lineActionError ? <p className="text-sm text-red-600">{lineActionError}</p> : null}
+          {lineActionWarning ? <p className="text-sm text-amber-600">{lineActionWarning}</p> : null}
         </CardContent>
       </Card>
 
@@ -354,6 +392,7 @@ export default function PurchaseOrderDetailPage() {
       {isDraft ? (
         <POLineAddForm
           orgId={orgId}
+          supplierId={po.supplier}
           existingItemIds={po.lines.map((line) => line.item.id)}
           onAddLine={(payload) => void handleAddLine(payload)}
           disabled={isActionPending}
@@ -362,24 +401,44 @@ export default function PurchaseOrderDetailPage() {
 
       <ConfirmDialog
         open={submitDialogOpen}
-        onOpenChange={setSubmitDialogOpen}
+        onOpenChange={(open) => {
+          setSubmitDialogOpen(open)
+          if (!open) setSubmitError("")
+        }}
         title="Submit Purchase Order"
         description="Once submitted this order cannot be edited. Are you sure?"
         confirmLabel="Submit"
-        onConfirm={() => {
-          void submitPO.mutateAsync(po.id).then(() => router.refresh())
+        onConfirm={async () => {
+          setSubmitError("")
+          try {
+            await submitPO.mutateAsync(po.id)
+            setSubmitDialogOpen(false)
+          } catch {
+            setSubmitError("Failed to submit. Please try again.")
+          }
         }}
+        error={submitError}
       />
 
       <ConfirmDialog
         open={cancelDialogOpen}
-        onOpenChange={setCancelDialogOpen}
+        onOpenChange={(open) => {
+          setCancelDialogOpen(open)
+          if (!open) setCancelError("")
+        }}
         title="Cancel Purchase Order"
         description="This will cancel the purchase order. This cannot be undone."
         confirmLabel="Cancel Order"
-        onConfirm={() => {
-          void cancelPO.mutateAsync(po.id).then(() => router.refresh())
+        onConfirm={async () => {
+          setCancelError("")
+          try {
+            await cancelPO.mutateAsync(po.id)
+            setCancelDialogOpen(false)
+          } catch {
+            setCancelError("Failed to cancel. Please try again.")
+          }
         }}
+        error={cancelError}
         destructive
       />
     </div>

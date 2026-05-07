@@ -1,6 +1,10 @@
+from django.db import IntegrityError, transaction
 from rest_framework import serializers
 
-from .models import Supplier, SupplierContact
+from inventory.models import OrgItem
+from inventory.serializers import ItemSummarySerializer
+
+from .models import Supplier, SupplierContact, SupplierItem
 
 
 class SupplierContactSerializer(serializers.ModelSerializer):
@@ -136,6 +140,88 @@ class SupplierWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"display_name": "A supplier with this name already exists in this organisation."}
             )
+
+
+class SupplierItemSerializer(serializers.ModelSerializer):
+    org_item = ItemSummarySerializer(read_only=True)
+    org_item_id = serializers.PrimaryKeyRelatedField(
+        queryset=OrgItem.objects.none(),
+        source="org_item",
+        write_only=True,
+    )
+
+    class Meta:
+        model = SupplierItem
+        fields = [
+            "id",
+            "org_item",
+            "org_item_id",
+            "is_preferred",
+            "unit_cost",
+            "lead_time_days",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "org_item", "created_at", "updated_at"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request:
+            self.fields["org_item_id"].queryset = OrgItem.objects.filter(
+                organization=request.org
+            )
+
+    def create(self, validated_data):
+        supplier = self.context["supplier"]
+        org_item = validated_data["org_item"]
+
+        # Reactivate soft-deleted row instead of inserting a duplicate
+        existing = SupplierItem.all_objects.filter(
+            supplier=supplier, org_item=org_item
+        ).first()
+        if existing and not existing.is_active:
+            for field, value in validated_data.items():
+                if field != "org_item":
+                    setattr(existing, field, value)
+            existing.is_active = True
+            self._demote_preferred_if_needed(org_item, existing)
+            existing.save()
+            self.instance = existing
+            self._reactivated = True
+            return existing
+
+        with transaction.atomic():
+            self._demote_preferred_if_needed(org_item, None)
+            try:
+                return super().create({**validated_data, "supplier": supplier})
+            except IntegrityError as exc:
+                if "unique_preferred_supplier_per_item" in str(exc):
+                    raise serializers.ValidationError(
+                        {"is_preferred": "Another supplier is already preferred for this item."}
+                    )
+                raise
+
+    def update(self, instance, validated_data):
+        with transaction.atomic():
+            self._demote_preferred_if_needed(instance.org_item, instance)
+            try:
+                return super().update(instance, validated_data)
+            except IntegrityError as exc:
+                if "unique_preferred_supplier_per_item" in str(exc):
+                    raise serializers.ValidationError(
+                        {"is_preferred": "Another supplier is already preferred for this item."}
+                    )
+                raise
+
+    def _demote_preferred_if_needed(self, org_item, current_instance):
+        if not self.validated_data.get("is_preferred", False):
+            return
+        qs = SupplierItem.objects.filter(org_item=org_item, is_preferred=True, is_active=True)
+        if current_instance and current_instance.pk:
+            qs = qs.exclude(pk=current_instance.pk)
+        qs.update(is_preferred=False)
 
 
 class SupplierDeactivateSerializer(serializers.ModelSerializer):

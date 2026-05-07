@@ -6,6 +6,9 @@ export type StockTakeStatus =
   | "COMPLETED_WITH_VARIANCES"
   | "CANCELLED"
 
+export type StockTakeType = "FULL" | "CYCLE"
+export type CycleItemClass = "A" | "B" | "C"
+
 export interface StockTakeLine {
   id: number
   org_item: string
@@ -25,6 +28,9 @@ export interface StockTake {
   id: string
   branch: string | { id: string; name?: string; code?: string }
   status: StockTakeStatus
+  stock_take_type: StockTakeType
+  cycle_item_class: CycleItemClass | null
+  scheduled_for: string | null
   notes: string
   total_lines_count: number
   counted_lines_count: number
@@ -51,6 +57,15 @@ export interface StockTakeDetail extends StockTake {
 export interface CreateStockTakePayload {
   branch: string
   notes?: string
+  stock_take_type?: StockTakeType
+  cycle_item_class?: CycleItemClass
+  scheduled_for?: string
+}
+
+export interface GenerateCycleCountPayload {
+  branch_id: string
+  cycle_item_class: CycleItemClass
+  scheduled_for?: string
 }
 
 export interface UpdateStockTakeNotesPayload {

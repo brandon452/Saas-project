@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q
+from django_ratelimit.core import is_ratelimited
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed
@@ -9,6 +10,12 @@ from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
+from audit.services import log_audit_event
+from exports.audit import log_export_event
+from exports.config import get_csv_rate
+from exports.filenames import csv_filename
+from exports.rows.branch_transfers import HEADERS, to_row
+from exports.streaming import enforce_row_cap, stream_csv
 from tenancy.mixins import OrgScopedViewSetMixin
 from tenancy.permissions import (
     IsOrgOperationalUser,
@@ -18,7 +25,6 @@ from tenancy.permissions import (
     get_org_membership,
     get_parent_membership,
 )
-from audit.services import log_audit_event
 
 from .models import BranchTransfer, BranchTransferLine
 from .serializers import (
@@ -168,6 +174,27 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
                 diff_json={"status": {"before": BranchTransfer.DRAFT, "after": BranchTransfer.APPROVED}},
             )
 
+    @action(detail=False, methods=["get"], url_path="export/csv")
+    def export_csv(self, request, *args, **kwargs):
+        if is_ratelimited(request, group="transfer_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
+            return Response(
+                {"detail": "Too many export requests. Please wait before exporting again."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        qs = self.get_queryset().select_related(
+            "from_branch", "to_branch", "organization", "to_organization"
+        )
+        row_count = enforce_row_cap(qs)
+        log_export_event(
+            organization=request.org,
+            actor_user=request.user,
+            resource="branch_transfer",
+            format="csv",
+            filters=dict(request.query_params),
+            row_count=row_count,
+        )
+        return stream_csv(HEADERS, (to_row(t) for t in qs.iterator(chunk_size=500)), csv_filename("branch-transfers"))
+
     @action(detail=True, methods=["post"], url_path="approve")
     @transaction.atomic
     def approve(self, request, *args, **kwargs):
@@ -213,23 +240,14 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        before_status = transfer.status
+        idempotency_key = request.data.get("idempotency_key") or None
+
         try:
-            dispatch_transfer(transfer=transfer, performed_by=request.user)
+            dispatch_transfer(transfer=transfer, performed_by=request.user, idempotency_key=idempotency_key)
         except DjangoValidationError as exc:
             raise DRFValidationError({"detail": exc.messages})
 
         transfer.refresh_from_db()
-        log_audit_event(
-            organization=request.org,
-            actor_user=request.user,
-            event_type="branch_transfer.dispatched",
-            resource_type="branch_transfer",
-            resource_id=transfer.id,
-            summary=f"Dispatched transfer {transfer.id}",
-            metadata_json={"transfer_id": str(transfer.id)},
-            diff_json={"status": {"before": before_status, "after": transfer.status}},
-        )
         return Response(BranchTransferSerializer(transfer).data)
 
     @action(detail=True, methods=["post"], url_path="receive")
@@ -246,33 +264,20 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
         serializer = BranchTransferReceiveSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        before_status = transfer.status
+        idempotency_key = serializer.validated_data.get("idempotency_key") or None
+
         try:
             receive_transfer(
                 transfer=transfer,
                 lines_data=serializer.validated_data["lines"],
                 performed_by=request.user,
                 receive_notes=serializer.validated_data.get("notes", ""),
+                idempotency_key=idempotency_key,
             )
         except DjangoValidationError as exc:
             raise DRFValidationError({"detail": exc.messages})
 
         transfer.refresh_from_db()
-        event_type = (
-            "branch_transfer.received_complete"
-            if transfer.status == BranchTransfer.RECEIVED_COMPLETE
-            else "branch_transfer.received_with_variance"
-        )
-        log_audit_event(
-            organization=transfer.to_organization,
-            actor_user=request.user,
-            event_type=event_type,
-            resource_type="branch_transfer",
-            resource_id=transfer.id,
-            summary=f"Received transfer {transfer.id}",
-            metadata_json={"transfer_id": str(transfer.id)},
-            diff_json={"status": {"before": before_status, "after": transfer.status}},
-        )
         return Response(BranchTransferSerializer(transfer).data)
 
     @action(detail=True, methods=["post"], url_path="cancel")

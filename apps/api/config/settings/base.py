@@ -37,7 +37,12 @@ INSTALLED_APPS = [
     "branch_transfers",
     "quick_sales",
     "reports",
+    "exports.apps.ExportsConfig",
 ]
+
+EXPORT_CSV_RATE_LIMIT = "20/m"
+EXPORT_PDF_RATE_LIMIT = "10/m"
+EXPORT_MAX_ROWS = 10000
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -157,6 +162,15 @@ AUTH_COOKIE_ACCESS_MAX_AGE = 60 * 15
 AUTH_COOKIE_REFRESH_MAX_AGE = 60 * 60 * 24 * 7
 
 CSRF_COOKIE_HTTPONLY = False
+
+# ---------------------------------------------------------------------------
+# Lot / Batch + Expiry tracking feature flags
+# When False, lot enforcement is skipped even if an item has is_lot_tracked=True
+# ---------------------------------------------------------------------------
+LOT_TRACKING_RECEIPTS_ENABLED = os.getenv("LOT_TRACKING_RECEIPTS_ENABLED", "false").lower() == "true"
+LOT_TRACKING_TRANSFERS_ENABLED = os.getenv("LOT_TRACKING_TRANSFERS_ENABLED", "false").lower() == "true"
+LOT_TRACKING_QUICK_SALES_ENABLED = os.getenv("LOT_TRACKING_QUICK_SALES_ENABLED", "false").lower() == "true"
+LOT_TRACKING_STOCK_TAKE_ENABLED = os.getenv("LOT_TRACKING_STOCK_TAKE_ENABLED", "false").lower() == "true"
 CSRF_COOKIE_SAMESITE = "Lax"
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
@@ -181,6 +195,18 @@ CACHES = {
 RATELIMIT_USE_CACHE = "default"
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+USE_EVENT_AUDIT_GOODS_RECEIPTS = os.getenv("USE_EVENT_AUDIT_GOODS_RECEIPTS", "false").lower() == "true"
+USE_EVENT_AUDIT_BRANCH_TRANSFERS = os.getenv("USE_EVENT_AUDIT_BRANCH_TRANSFERS", "false").lower() == "true"
+USE_EVENT_AUDIT_QUICK_SALES = os.getenv("USE_EVENT_AUDIT_QUICK_SALES", "false").lower() == "true"
+
+# ---------------------------------------------------------------------------
+# Scan workflow feature flags — default OFF, enable per-environment
+# ---------------------------------------------------------------------------
+SCAN_RECEIVE_ENABLED = os.getenv("SCAN_RECEIVE_ENABLED", "false").lower() == "true"
+SCAN_PICK_ENABLED = os.getenv("SCAN_PICK_ENABLED", "false").lower() == "true"
+SCAN_COUNT_ENABLED = os.getenv("SCAN_COUNT_ENABLED", "false").lower() == "true"
+SCAN_TRANSFER_ENABLED = os.getenv("SCAN_TRANSFER_ENABLED", "false").lower() == "true"
 
 CORS_ALLOW_HEADERS = list(default_headers) + ["x-branch-id"]
 

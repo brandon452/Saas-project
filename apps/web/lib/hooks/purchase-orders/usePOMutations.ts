@@ -105,5 +105,14 @@ export function usePOMutations(orgId: string) {
     onSuccess: (_, { poId }) => invalidateBoth(poId),
   })
 
-  return { createPO, updatePO, submitPO, cancelPO, addLine, updateLine, removeLine }
+  const reconcileStatus = useMutation({
+    mutationFn: (poId: string) =>
+      apiRequest<PurchaseOrder>(`orgs/${orgId}/purchase-orders/${poId}/reconcile-status/`, {
+        method: "POST",
+        headers: getCsrfHeader(),
+      }),
+    onSuccess: (_, poId) => invalidateBoth(poId),
+  })
+
+  return { createPO, updatePO, submitPO, cancelPO, addLine, updateLine, removeLine, reconcileStatus }
 }

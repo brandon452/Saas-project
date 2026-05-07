@@ -1,11 +1,13 @@
 import type { ComponentType } from "react"
 import {
+  AlertTriangle,
   ArrowLeftRight,
   BarChart3,
   BookOpen,
   Building2,
   ClipboardCheck,
   ClipboardList,
+  Clock,
   History,
   LayoutDashboard,
   Layers,
@@ -45,7 +47,7 @@ export function getNavGroups(orgId: string): NavGroup[] {
           allowedRoles: "all",
         },
         {
-          label: "Items",
+          label: "Item Catalog",
           href: `/orgs/${orgId}/inventory/items`,
           icon: Tag,
           allowedRoles: "all",
@@ -159,6 +161,18 @@ export function getNavGroups(orgId: string): NavGroup[] {
           label: "Stock Valuation",
           href: `/orgs/${orgId}/reports/stock-valuation`,
           icon: BarChart3,
+          allowedRoles: ["OWNER", "ADMIN"],
+        },
+        {
+          label: "Inventory Aging",
+          href: `/orgs/${orgId}/reports/inventory-aging`,
+          icon: Clock,
+          allowedRoles: ["OWNER", "ADMIN"],
+        },
+        {
+          label: "Slow / Dead Stock",
+          href: `/orgs/${orgId}/reports/slow-dead-stock`,
+          icon: AlertTriangle,
           allowedRoles: ["OWNER", "ADMIN"],
         },
       ],

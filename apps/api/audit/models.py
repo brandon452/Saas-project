@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 
 
 class AuditEvent(models.Model):
@@ -45,6 +46,22 @@ class AuditEvent(models.Model):
                 fields=["organization", "resource_type", "resource_id", "-occurred_at"],
                 name="audit_org_res_occ_idx",
             ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "event_type", "resource_id"],
+                condition=Q(
+                    event_type__in=[
+                        "goods_receipt.created",
+                        "branch_transfer.dispatched",
+                        "branch_transfer.received_complete",
+                        "branch_transfer.received_with_variance",
+                        "quick_sale.created",
+                        "quick_sale.voided",
+                    ]
+                ),
+                name="audit_unique_org_event_resource_event_audit",
+            )
         ]
 
     def __str__(self):

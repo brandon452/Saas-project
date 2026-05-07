@@ -8,6 +8,8 @@ import { BranchTransferDirectionBadge } from "@/components/branch-transfers/Bran
 import { BranchTransferStatusBadge } from "@/components/branch-transfers/BranchTransferStatusBadge"
 import { ReceiveTransferForm } from "@/components/branch-transfers/ReceiveTransferForm"
 import { TransferLineTable } from "@/components/branch-transfers/TransferLineTable"
+import { TransferDispatchVerifyMode } from "@/components/scan-modes/TransferDispatchVerifyMode"
+import { TransferReceiveScanMode } from "@/components/scan-modes/TransferReceiveScanMode"
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -52,6 +54,8 @@ export default function BranchTransferDetailPage() {
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
   const [receiveOpen, setReceiveOpen] = useState(false)
   const [actionError, setActionError] = useState("")
+  const [dispatchScanOpen, setDispatchScanOpen] = useState(false)
+  const [receiveScanOpen, setReceiveScanOpen] = useState(false)
 
   const branchMap = new Map((networkBranchesQuery.data ?? []).map((branch) => [branch.id, branch]))
   const errorMessage = transferQuery.error instanceof Error ? transferQuery.error.message : ""
@@ -215,7 +219,7 @@ export default function BranchTransferDetailPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <TransferLineTable transfer={transfer} />
-          {showReceiverActions && receiveOpen ? (
+          {showReceiverActions && receiveOpen && !receiveScanOpen ? (
             <ReceiveTransferForm
               transfer={transfer}
               onSubmit={(payload) => void handleReceive(payload)}
@@ -225,6 +229,32 @@ export default function BranchTransferDetailPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      {dispatchScanOpen && showSenderActions && transfer.status === "APPROVED" && (
+        <TransferDispatchVerifyMode
+          orgId={orgId}
+          branchId={transfer.from_branch}
+          lines={transfer.lines}
+          isPending={dispatchTransfer.isPending}
+          onDispatch={async () => {
+            await handleDispatch()
+            setDispatchScanOpen(false)
+          }}
+        />
+      )}
+
+      {receiveScanOpen && showReceiverActions && (
+        <TransferReceiveScanMode
+          orgId={orgId}
+          branchId={transfer.to_branch}
+          lines={transfer.lines}
+          isPending={receiveTransfer.isPending}
+          onReceive={async (payload) => {
+            await handleReceive(payload)
+            setReceiveScanOpen(false)
+          }}
+        />
+      )}
 
       <Card>
         <CardHeader>
@@ -239,9 +269,20 @@ export default function BranchTransferDetailPage() {
                 </Button>
               ) : null}
               {transfer.status === "APPROVED" ? (
-                <Button disabled={actionPending} onClick={() => setDispatchDialogOpen(true)}>
-                  Dispatch
-                </Button>
+                <>
+                  <Button
+                    disabled={actionPending}
+                    variant={dispatchScanOpen ? "ghost" : "default"}
+                    onClick={() => { setDispatchScanOpen((v) => !v) }}
+                  >
+                    {dispatchScanOpen ? "Cancel Scan" : "Dispatch (Scan)"}
+                  </Button>
+                  {!dispatchScanOpen && (
+                    <Button variant="outline" disabled={actionPending} onClick={() => setDispatchDialogOpen(true)}>
+                      Dispatch
+                    </Button>
+                  )}
+                </>
               ) : null}
               {transfer.status === "DRAFT" || transfer.status === "APPROVED" ? (
                 <Button variant="ghost" disabled={actionPending} onClick={() => setCancelDialogOpen(true)}>
@@ -251,10 +292,21 @@ export default function BranchTransferDetailPage() {
             </div>
           ) : null}
 
-          {showReceiverActions && !receiveOpen ? (
-            <Button disabled={actionPending} onClick={() => setReceiveOpen(true)}>
-              Receive
-            </Button>
+          {showReceiverActions ? (
+            <div className="flex flex-wrap gap-3">
+              <Button
+                disabled={actionPending}
+                variant={receiveScanOpen ? "ghost" : "default"}
+                onClick={() => { setReceiveScanOpen((v) => !v); setReceiveOpen(false) }}
+              >
+                {receiveScanOpen ? "Cancel Scan" : "Receive (Scan)"}
+              </Button>
+              {!receiveScanOpen && (
+                <Button variant="outline" disabled={actionPending} onClick={() => { setReceiveOpen(true); setReceiveScanOpen(false) }}>
+                  Receive (Manual)
+                </Button>
+              )}
+            </div>
           ) : null}
 
           {!showSenderActions && !showReceiverActions ? (

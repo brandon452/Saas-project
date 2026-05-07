@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/table"
 import { useBranchTransfers } from "@/lib/hooks/branch-transfers/useBranchTransfers"
 import { useNetworkBranches } from "@/lib/hooks/branch-transfers/useNetworkBranches"
+import { useExportCsv } from "@/lib/hooks/useExportCsv"
 import { useOrg } from "@/lib/hooks/useOrg"
 
 const STATUS_OPTIONS = [
@@ -44,6 +45,14 @@ export default function BranchTransfersPage() {
     page,
   })
   const networkBranchesQuery = useNetworkBranches(orgId)
+
+  const { exportStatus, exportError, triggerExport } = useExportCsv()
+
+  function handleExport() {
+    const params = new URLSearchParams()
+    if (status) params.set("status", status)
+    void triggerExport(`orgs/${orgId}/branch-transfers/export/csv/`, params)
+  }
 
   const branchMap = new Map((networkBranchesQuery.data ?? []).map((branch) => [branch.id, branch]))
   const errorMessage = transfersQuery.error instanceof Error ? transfersQuery.error.message : ""
@@ -118,15 +127,28 @@ export default function BranchTransfersPage() {
             Track stock transfers across branches and organisations.
           </p>
         </div>
-        {role === "OWNER" || role === "ADMIN" ? (
-          <Link
-            href={`/orgs/${orgId}/branch-transfers/new`}
-            className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={exportStatus === "loading"}
+            onClick={handleExport}
           >
-            New Branch Transfer
-          </Link>
-        ) : null}
+            {exportStatus === "loading" ? "Exporting…" : exportStatus === "success" ? "Exported!" : "Export CSV"}
+          </Button>
+          {role === "OWNER" || role === "ADMIN" ? (
+            <Link
+              href={`/orgs/${orgId}/branch-transfers/new`}
+              className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+            >
+              New Branch Transfer
+            </Link>
+          ) : null}
+        </div>
       </div>
+      {exportStatus === "error" && exportError
+        ? <p className="text-sm text-destructive">{exportError}</p>
+        : null}
 
       <div className="grid gap-4 rounded-xl border border-border bg-card p-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))]">
         <div className="space-y-2">

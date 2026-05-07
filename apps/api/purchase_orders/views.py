@@ -1,13 +1,24 @@
 import logging
 
+from datetime import timezone as dt_timezone
+from decimal import Decimal
+
 from django.db import IntegrityError, transaction
+from django.http import HttpResponse
+from django.template.loader import render_to_string
+from django.utils.timezone import now
+from django_ratelimit.core import is_ratelimited
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed, ValidationError as DRFValidationError
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
-
 from audit.services import log_audit_event
+from exports.audit import log_export_event
+from exports.config import get_csv_rate, get_pdf_rate
+from exports.filenames import csv_filename, pdf_filename
+from exports.rows.purchase_orders import HEADERS, to_row
+from exports.streaming import enforce_row_cap, stream_csv
 from tenancy.mixins import OrgScopedViewSetMixin
 from tenancy.permissions import IsOrgOperationalUser, RolePolicyMixin, get_org_membership
 
@@ -22,6 +33,21 @@ from .serializers import (
     PurchaseOrderUpdateSerializer,
 )
 from .services import generate_po_number, sync_purchase_order_next_number
+
+
+def _po_line_warnings(po, line):
+    from suppliers.models import SupplierItem
+    has_link = SupplierItem.objects.filter(
+        supplier=po.supplier, org_item=line.item, is_active=True
+    ).exists()
+    if has_link:
+        return []
+    return [f"'{line.item.display_name}' has no catalog link to this supplier."]
+
+
+def _html_to_pdf(html_string: str) -> bytes:
+    from weasyprint import HTML  # lazy — avoids module-load failure on Windows dev
+    return HTML(string=html_string).write_pdf()
 
 
 class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
@@ -45,7 +71,8 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
 
         status_filter = params.get("status")
         if status_filter:
-            qs = qs.filter(status=status_filter)
+            statuses = [s.strip() for s in status_filter.split(",") if s.strip()]
+            qs = qs.filter(status__in=statuses) if len(statuses) > 1 else qs.filter(status=statuses[0])
 
         supplier_id = params.get("supplier")
         if supplier_id:
@@ -105,6 +132,16 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
                 continue
 
         raise DRFValidationError({"detail": "Could not allocate a unique PO number. Please retry."})
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        response_serializer = PurchaseOrderSerializer(
+            serializer.instance, context={"request": request}
+        )
+        headers = self.get_success_headers(response_serializer.data)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
     @action(detail=True, methods=["post"], url_path="submit")
     @transaction.atomic
@@ -173,6 +210,27 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
         )
         return Response(PurchaseOrderSerializer(po).data)
 
+    @action(detail=True, methods=["post"], url_path="reconcile-status")
+    @transaction.atomic
+    def reconcile_status(self, request, *args, **kwargs):
+        po = PurchaseOrder.objects.select_for_update().get(pk=self.get_object().pk)
+        if po.status not in (PurchaseOrder.PARTIALLY_RECEIVED, PurchaseOrder.SUBMITTED):
+            return Response(
+                {"detail": "Only SUBMITTED or PARTIALLY_RECEIVED orders can be reconciled."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        all_lines = list(po.lines.all())
+        if not all_lines:
+            return Response({"detail": "PO has no lines."}, status=status.HTTP_400_BAD_REQUEST)
+        new_status = (
+            PurchaseOrder.FULLY_RECEIVED
+            if all(line.received_quantity >= line.ordered_quantity for line in all_lines)
+            else PurchaseOrder.PARTIALLY_RECEIVED
+        )
+        po.status = new_status
+        po.save(update_fields=["status", "updated_at"])
+        return Response(PurchaseOrderSerializer(po).data)
+
     @action(detail=True, methods=["get"], url_path="lines")
     def lines(self, request, *args, **kwargs):
         po = self.get_object()
@@ -200,10 +258,10 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
             if "unique_item_per_po" in str(exc):
                 raise DRFValidationError({"item": ["This item already exists on the purchase order."]})
             raise
-        return Response(
-            PurchaseOrderLineSerializer(serializer.instance).data,
-            status=status.HTTP_201_CREATED,
-        )
+        line = serializer.instance
+        response_data = PurchaseOrderLineSerializer(line).data
+        response_data["warnings"] = _po_line_warnings(po, line)
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["patch"], url_path=r"lines/(?P<line_id>[^/.]+)")
     def update_line(self, request, line_id=None, *args, **kwargs):
@@ -235,7 +293,78 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
             if "unique_item_per_po" in str(exc):
                 raise DRFValidationError({"item": ["This item already exists on the purchase order."]})
             raise
-        return Response(PurchaseOrderLineSerializer(serializer.instance).data)
+        line = serializer.instance
+        response_data = PurchaseOrderLineSerializer(line).data
+        response_data["warnings"] = _po_line_warnings(po, line)
+        return Response(response_data)
+
+    @action(detail=False, methods=["get"], url_path="export/csv")
+    def export_csv(self, request, *args, **kwargs):
+        if is_ratelimited(request, group="po_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
+            return Response(
+                {"detail": "Too many export requests. Please wait before exporting again."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        qs = self.get_queryset().select_related("supplier", "branch")
+        row_count = enforce_row_cap(qs)
+        log_export_event(
+            organization=request.org,
+            actor_user=request.user,
+            resource="purchase_order",
+            format="csv",
+            filters=dict(request.query_params),
+            row_count=row_count,
+        )
+        return stream_csv(HEADERS, (to_row(po) for po in qs.iterator(chunk_size=500)), csv_filename("purchase-orders"))
+
+    @action(detail=True, methods=["get"], url_path="export/pdf")
+    def export_pdf(self, request, org_id=None, pk=None):
+        if is_ratelimited(request, group="po_export_pdf", key="user", rate=get_pdf_rate(), method="GET", increment=True):
+            return Response(
+                {"detail": "Rate limit exceeded. Try again shortly."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        po = self.get_object()
+
+        lines_with_totals = []
+        grand_total = Decimal("0")
+        for line in po.lines.select_related("item__master_item").order_by("id"):
+            line_total = line.ordered_quantity * line.unit_price
+            grand_total += line_total
+            lines_with_totals.append({
+                "item_name": line.item.display_name,
+                "sku": line.item.sku,
+                "ordered_quantity": line.ordered_quantity,
+                "received_quantity": line.received_quantity,
+                "unit_price": line.unit_price,
+                "line_total": line_total,
+            })
+
+        context = {
+            "organization": request.org,
+            "po": po,
+            "lines_with_totals": lines_with_totals,
+            "grand_total": grand_total,
+            "generated_at": now().astimezone(dt_timezone.utc),
+        }
+
+        html_string = render_to_string("purchase_orders/po_pdf.html", context)
+        pdf_bytes = _html_to_pdf(html_string)
+
+        log_export_event(
+            organization=request.org,
+            actor_user=request.user,
+            resource="purchase_order",
+            format="pdf",
+            filters={},
+            document_id=po.id,
+        )
+
+        filename = pdf_filename("po", po.po_number)
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
 
     @action(detail=True, methods=["delete"], url_path=r"lines/(?P<line_id>[^/.]+)/remove")
     def remove_line(self, request, line_id=None, *args, **kwargs):

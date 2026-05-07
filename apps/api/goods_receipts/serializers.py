@@ -55,6 +55,14 @@ class GoodsReceiptLineWriteSerializer(serializers.ModelSerializer):
 
 class GoodsReceiptSerializer(serializers.ModelSerializer):
     lines = GoodsReceiptLineSerializer(many=True, read_only=True)
+    supplier_display = serializers.SerializerMethodField()
+
+    def get_supplier_display(self, obj):
+        if obj.supplier:
+            return obj.supplier.display_name
+        if obj.purchase_order and obj.purchase_order.supplier:
+            return obj.purchase_order.supplier.display_name
+        return None
 
     class Meta:
         model = GoodsReceipt
@@ -64,6 +72,7 @@ class GoodsReceiptSerializer(serializers.ModelSerializer):
             "purchase_order",
             "branch",
             "supplier",
+            "supplier_display",
             "source_reference",
             "idempotency_key",
             "received_by",
@@ -77,6 +86,7 @@ class GoodsReceiptSerializer(serializers.ModelSerializer):
             "received_at",
             "lines",
             "idempotency_key",
+            "supplier_display",
         ]
 
 

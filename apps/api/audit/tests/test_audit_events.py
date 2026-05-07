@@ -2,9 +2,11 @@ import csv
 import io
 import json
 from datetime import timedelta
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -255,21 +257,23 @@ class AuditEventsTests(APITestCase):
         self.assertEqual(closed_event.diff_json["status"]["before"], InventoryClosePeriod.OPEN)
         self.assertEqual(closed_event.diff_json["status"]["after"], InventoryClosePeriod.CLOSED)
 
+    @override_settings(USE_EVENT_AUDIT_GOODS_RECEIPTS=True)
     def test_goods_receipt_created_event_has_required_metadata_and_null_diff(self):
         master = MasterItem.objects.create(parent_company=self.org.parent_company, name="Receipt Item", sku="REC-1")
         org_item = OrgItem.objects.create(organization=self.org, master_item=master, is_active=True)
         BranchItem.objects.create(org_item=org_item, branch=self.branch_a, is_active=True)
 
         self._auth(self.owner)
-        response = self.client.post(
-            f"/api/orgs/{self.org.id}/goods-receipts/",
-            {
-                "receipt_type": "DIRECT_RECEIPT",
-                "branch": str(self.branch_a.id),
-                "lines": [{"item": str(org_item.id), "quantity_received": 2, "unit_cost": "5.00"}],
-            },
-            format="json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                f"/api/orgs/{self.org.id}/goods-receipts/",
+                {
+                    "receipt_type": "DIRECT_RECEIPT",
+                    "branch": str(self.branch_a.id),
+                    "lines": [{"item": str(org_item.id), "quantity_received": 2, "unit_cost": "5.00"}],
+                },
+                format="json",
+            )
         self.assertEqual(response.status_code, 201)
         receipt_id = response.data["id"]
         event = AuditEvent.objects.filter(event_type="goods_receipt.created", resource_id=receipt_id).first()
@@ -321,6 +325,45 @@ class AuditEventsTests(APITestCase):
         auto_event = AuditEvent.objects.filter(event_type="branch_transfer.approved", resource_id=auto_transfer_id).first()
         self.assertIsNotNone(auto_event)
         self.assertTrue(auto_event.metadata_json["auto_approved"])
+
+    @override_settings(USE_EVENT_AUDIT_QUICK_SALES=True)
+    def test_quick_sale_events_created_and_voided(self):
+        master = MasterItem.objects.create(parent_company=self.org.parent_company, name="Quick Sale Item", sku="QS-1")
+        org_item = OrgItem.objects.create(organization=self.org, master_item=master, is_active=True)
+        BranchItem.objects.create(org_item=org_item, branch=self.branch_a, is_active=True)
+
+        from inventory.api import record_stock_movement
+        from inventory.models import StockLedger
+
+        record_stock_movement(
+            org=self.org,
+            branch=self.branch_a,
+            item=org_item,
+            quantity=Decimal("1.0000"),
+            movement_type=StockLedger.MOVEMENT_RECEIPT,
+            unit_cost=Decimal("10.0000"),
+            performed_by=self.owner,
+            idempotency_key="audit-qs-seed",
+        )
+
+        self._auth(self.owner)
+        with self.captureOnCommitCallbacks(execute=True):
+            create_resp = self.client.post(
+                f"/api/orgs/{self.org.id}/quick-sales/",
+                {
+                    "branch": str(self.branch_a.id),
+                    "lines": [{"item": str(org_item.id), "quantity": "1.0000", "unit_price": "12.0000"}],
+                },
+                format="json",
+            )
+        self.assertEqual(create_resp.status_code, 201)
+        sale_id = create_resp.data["id"]
+        self.assertTrue(AuditEvent.objects.filter(event_type="quick_sale.created", resource_id=sale_id).exists())
+
+        with self.captureOnCommitCallbacks(execute=True):
+            void_resp = self.client.post(f"/api/orgs/{self.org.id}/quick-sales/{sale_id}/void/", {}, format="json")
+        self.assertEqual(void_resp.status_code, 200)
+        self.assertTrue(AuditEvent.objects.filter(event_type="quick_sale.voided", resource_id=sale_id).exists())
 
     def test_retention_cleanup_command_batches(self):
         now = timezone.now()

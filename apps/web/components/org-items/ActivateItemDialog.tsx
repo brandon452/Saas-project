@@ -81,7 +81,7 @@ export function ActivateItemDialog({
 
   async function handleSubmit() {
     if (!selectedId) {
-      setError("Select a global catalog item to activate.")
+      setError("Please select an item to continue.")
       return
     }
 
@@ -115,9 +115,9 @@ export function ActivateItemDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Activate Item</DialogTitle>
+          <DialogTitle>Add to Catalog</DialogTitle>
           <DialogDescription>
-            Choose a global catalog item to add to this organization&apos;s local item list.
+            Select an item from the catalog to add to this organization&apos;s inventory.
           </DialogDescription>
         </DialogHeader>
 
@@ -134,13 +134,13 @@ export function ActivateItemDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>Available global catalog items</Label>
+            <Label>Available items</Label>
             <div className="max-h-72 space-y-2 overflow-y-auto rounded-xl border border-border p-2">
               {availableItemsQuery.isLoading ? (
                 <div className="p-4 text-sm text-muted-foreground">Loading available items...</div>
               ) : showBaseEmptyState ? (
                 <div className="p-4 text-sm text-muted-foreground">
-                  All global catalog items have already been activated
+                  All catalog items have been added. To reactivate a deactivated item, find it in the Items list and use the Edit panel.
                 </div>
               ) : showFilteredEmptyState ? (
                 <div className="p-4 text-sm text-muted-foreground">No items match your search</div>
@@ -172,12 +172,12 @@ export function ActivateItemDialog({
 
           {selectedItem ? (
             <div className="space-y-2">
-              <Label htmlFor="activate-item-override">Name override</Label>
+              <Label htmlFor="activate-item-override">Custom name</Label>
               <Input
                 id="activate-item-override"
                 value={nameOverride}
                 onChange={(event) => setNameOverride(event.target.value)}
-                placeholder="Leave blank to use the global catalog name"
+                placeholder="Leave blank to use the default catalog name"
                 disabled={activateItem.isPending}
               />
             </div>
@@ -196,7 +196,7 @@ export function ActivateItemDialog({
             onClick={handleSubmit}
             disabled={activateItem.isPending || !selectedId}
           >
-            {activateItem.isPending ? "Activating..." : "Activate Item"}
+            {activateItem.isPending ? "Adding..." : "Add to Catalog"}
           </Button>
         </DialogFooter>
       </DialogContent>

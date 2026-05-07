@@ -82,6 +82,7 @@ export interface ReceiveLineInput {
 export interface ReceiveTransferPayload {
   lines: ReceiveLineInput[]
   notes: string
+  idempotency_key?: string
 }
 
 export interface BTItemSearchResult {

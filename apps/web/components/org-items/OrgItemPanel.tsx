@@ -34,7 +34,7 @@ function getUpdateErrorMessage(error: unknown) {
   }
 
   if (message.includes("400")) {
-    return "Could not save the item name override."
+    return "Could not save the custom name."
   }
 
   return "Could not save item changes."
@@ -163,12 +163,12 @@ export function OrgItemPanel({
               {canEdit ? (
                 <div className="space-y-4 rounded-xl border border-border p-4">
                   <div className="space-y-2">
-                    <Label htmlFor="org-item-name-override">Name override</Label>
+                    <Label htmlFor="org-item-name-override">Custom name</Label>
                     <Input
                       id="org-item-name-override"
                       value={nameOverride}
                       onChange={(event) => setNameOverride(event.target.value)}
-                      placeholder="Use global catalog name"
+                      placeholder="Leave blank to use the default catalog name"
                       disabled={controlsDisabled || !item.is_active}
                     />
                   </div>

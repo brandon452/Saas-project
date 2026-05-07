@@ -20,6 +20,7 @@ export interface GoodsReceipt {
   purchase_order: string | null
   branch: string
   supplier: string | null
+  supplier_display: string | null
   source_reference: string
   received_by: string | null
   received_at: string

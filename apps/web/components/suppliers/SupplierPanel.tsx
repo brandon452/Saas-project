@@ -18,8 +18,11 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { useSupplierContactMutations } from "@/lib/hooks/suppliers/useSupplierContactMutations"
 import { useSupplierContacts } from "@/lib/hooks/suppliers/useSupplierContacts"
+import { useSupplierItemMutations, useSupplierItems } from "@/lib/hooks/suppliers/useSupplierItems"
 import { useSupplierMutations } from "@/lib/hooks/suppliers/useSupplierMutations"
 import { useOrg } from "@/lib/hooks/useOrg"
+import { usePOItemSearch } from "@/lib/hooks/purchase-orders/usePOItemSearch"
+import type { SupplierCatalogItem } from "@/lib/types/supplier-catalog"
 import type { Supplier, SupplierContact } from "@/lib/types/suppliers"
 import { SupplierStatusBadge } from "./SupplierStatusBadge"
 
@@ -42,6 +45,8 @@ export function SupplierPanel({
   const { updateSupplier, deactivateSupplier, reactivateSupplier } = useSupplierMutations(orgId)
   const contactsQuery = useSupplierContacts(orgId, supplier?.id ?? null)
   const contactMutations = useSupplierContactMutations(orgId, supplier?.id ?? 0)
+  const catalogQuery = useSupplierItems(orgId, supplier?.id != null ? String(supplier.id) : null)
+  const catalogMutations = useSupplierItemMutations(orgId, supplier?.id != null ? String(supplier.id) : "")
 
   // Core
   const [displayName, setDisplayName] = useState("")
@@ -84,6 +89,21 @@ export function SupplierPanel({
   const [editContactEmail, setEditContactEmail] = useState("")
   const [editContactPhone, setEditContactPhone] = useState("")
 
+  // Catalog section state
+  const [catalogOpen, setCatalogOpen] = useState(false)
+  const [addingCatalogItem, setAddingCatalogItem] = useState(false)
+  const [catalogItemQuery, setCatalogItemQuery] = useState("")
+  const [catalogItemDebouncedQuery, setCatalogItemDebouncedQuery] = useState("")
+  const [selectedCatalogItem, setSelectedCatalogItem] = useState<{ id: string; name: string; sku: string } | null>(null)
+  const [newItemUnitCost, setNewItemUnitCost] = useState("")
+  const [newItemLeadTime, setNewItemLeadTime] = useState("")
+  const [newItemPreferred, setNewItemPreferred] = useState(false)
+  const [catalogError, setCatalogError] = useState("")
+  const [editingCatalogItemId, setEditingCatalogItemId] = useState<number | null>(null)
+  const [editItemUnitCost, setEditItemUnitCost] = useState("")
+  const [editItemLeadTime, setEditItemLeadTime] = useState("")
+  const [editItemPreferred, setEditItemPreferred] = useState(false)
+
   useEffect(() => {
     setDisplayName(supplier?.display_name ?? "")
     setLegalName(supplier?.legal_name ?? "")
@@ -104,7 +124,17 @@ export function SupplierPanel({
     setAddingContact(false)
     setContactError("")
     setEditingContactId(null)
+    setAddingCatalogItem(false)
+    setCatalogError("")
+    setEditingCatalogItemId(null)
   }, [supplier])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setCatalogItemDebouncedQuery(catalogItemQuery), 300)
+    return () => window.clearTimeout(timer)
+  }, [catalogItemQuery])
+
+  const { data: catalogItemSearchResults = [] } = usePOItemSearch(orgId, catalogItemDebouncedQuery)
 
   const canManage = canAccess(["OWNER", "ADMIN"])
   const isReadOnly = !supplier || !supplier.is_active || !canManage
@@ -273,6 +303,65 @@ export function SupplierPanel({
   }
 
   const contacts = contactsQuery.data ?? []
+  const catalogItems = catalogQuery.data ?? []
+
+  async function handleAddCatalogItem() {
+    if (!selectedCatalogItem) {
+      setCatalogError("Select an item.")
+      return
+    }
+    try {
+      setCatalogError("")
+      await catalogMutations.addItem.mutateAsync({
+        org_item_id: selectedCatalogItem.id,
+        unit_cost: newItemUnitCost.trim() || null,
+        lead_time_days: newItemLeadTime.trim() ? Number(newItemLeadTime) : null,
+        is_preferred: newItemPreferred,
+      })
+      setAddingCatalogItem(false)
+      setSelectedCatalogItem(null)
+      setCatalogItemQuery("")
+      setNewItemUnitCost("")
+      setNewItemLeadTime("")
+      setNewItemPreferred(false)
+    } catch {
+      setCatalogError("Could not add item to catalog.")
+    }
+  }
+
+  function handleStartEditCatalogItem(item: SupplierCatalogItem) {
+    setEditingCatalogItemId(item.id)
+    setEditItemUnitCost(item.unit_cost ?? "")
+    setEditItemLeadTime(item.lead_time_days != null ? String(item.lead_time_days) : "")
+    setEditItemPreferred(item.is_preferred)
+    setCatalogError("")
+  }
+
+  async function handleSaveCatalogItem(item: SupplierCatalogItem) {
+    try {
+      setCatalogError("")
+      await catalogMutations.updateItem.mutateAsync({
+        supplierItemId: item.id,
+        data: {
+          unit_cost: editItemUnitCost.trim() || null,
+          lead_time_days: editItemLeadTime.trim() ? Number(editItemLeadTime) : null,
+          is_preferred: editItemPreferred,
+        },
+      })
+      setEditingCatalogItemId(null)
+    } catch {
+      setCatalogError("Could not save catalog item.")
+    }
+  }
+
+  async function handleRemoveCatalogItem(item: SupplierCatalogItem) {
+    try {
+      setCatalogError("")
+      await catalogMutations.removeItem.mutateAsync(item.id)
+    } catch {
+      setCatalogError("Could not remove catalog item.")
+    }
+  }
 
   return (
     <>
@@ -711,6 +800,213 @@ export function SupplierPanel({
 
                 {contactError && !addingContact && editingContactId === null ? (
                   <p className="text-sm text-red-600">{contactError}</p>
+                ) : null}
+              </div>
+
+              {/* Catalog section */}
+              <div className="space-y-3 border-t border-border pt-4">
+                <div className="flex items-center justify-between">
+                  <button
+                    className="flex items-center gap-2 text-sm font-medium"
+                    onClick={() => setCatalogOpen((v) => !v)}
+                  >
+                    {catalogOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    Catalog
+                  </button>
+                  {canManage && supplier.is_active && catalogOpen ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { setAddingCatalogItem((v) => !v); setCatalogError("") }}
+                    >
+                      {addingCatalogItem ? "Cancel" : "Add item"}
+                    </Button>
+                  ) : null}
+                </div>
+
+                {catalogOpen ? (
+                  <>
+                    {addingCatalogItem ? (
+                      <div className="space-y-3 rounded-lg border border-border p-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Item *</Label>
+                          <Input
+                            value={catalogItemQuery}
+                            onChange={(e) => { setCatalogItemQuery(e.target.value); setSelectedCatalogItem(null) }}
+                            placeholder="Search by name or SKU"
+                          />
+                          {selectedCatalogItem ? (
+                            <p className="text-xs text-muted-foreground">
+                              Selected: {selectedCatalogItem.name} ({selectedCatalogItem.sku})
+                            </p>
+                          ) : catalogItemDebouncedQuery.length >= 2 ? (
+                            <div className="rounded-md border border-border bg-background">
+                              {catalogItemSearchResults.length === 0 ? (
+                                <p className="px-3 py-2 text-sm text-muted-foreground">No items found</p>
+                              ) : (
+                                catalogItemSearchResults
+                                  .filter((i) => !catalogItems.some((ci) => ci.org_item.id === i.id))
+                                  .map((item) => (
+                                    <button
+                                      key={item.id}
+                                      type="button"
+                                      className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent"
+                                      onClick={() => { setSelectedCatalogItem(item); setCatalogItemQuery(item.name) }}
+                                    >
+                                      <span>{item.name}</span>
+                                      <span className="text-muted-foreground">{item.sku}</span>
+                                    </button>
+                                  ))
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <Label className="text-xs">Unit cost</Label>
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.0001"
+                              value={newItemUnitCost}
+                              onChange={(e) => setNewItemUnitCost(e.target.value)}
+                              placeholder="0.00"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Lead time (days)</Label>
+                            <Input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={newItemLeadTime}
+                              onChange={(e) => setNewItemLeadTime(e.target.value)}
+                              placeholder="7"
+                            />
+                          </div>
+                        </div>
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={newItemPreferred}
+                            onChange={(e) => setNewItemPreferred(e.target.checked)}
+                          />
+                          Preferred supplier for this item
+                        </label>
+                        {catalogError ? <p className="text-sm text-red-600">{catalogError}</p> : null}
+                        <Button
+                          size="sm"
+                          onClick={() => void handleAddCatalogItem()}
+                          disabled={catalogMutations.addItem.isPending}
+                        >
+                          {catalogMutations.addItem.isPending ? "Adding..." : "Add to catalog"}
+                        </Button>
+                      </div>
+                    ) : null}
+
+                    {catalogItems.length === 0 && !addingCatalogItem ? (
+                      <p className="text-sm text-muted-foreground">No items in catalog yet.</p>
+                    ) : null}
+
+                    {catalogItems.map((item) => (
+                      <div
+                        key={item.id}
+                        className="rounded-lg border border-border p-3 space-y-1 text-sm"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">
+                            {item.org_item.name}
+                            {item.is_preferred ? (
+                              <span className="ml-2 text-xs text-primary">Preferred</span>
+                            ) : null}
+                          </span>
+                          {canManage ? (
+                            <div className="flex gap-2">
+                              {editingCatalogItemId === item.id ? (
+                                <button
+                                  className="text-xs text-muted-foreground hover:text-foreground"
+                                  onClick={() => setEditingCatalogItemId(null)}
+                                >
+                                  Cancel
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    className="text-xs text-muted-foreground hover:text-foreground"
+                                    onClick={() => handleStartEditCatalogItem(item)}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    className="text-xs text-red-500 hover:text-red-700"
+                                    onClick={() => void handleRemoveCatalogItem(item)}
+                                    disabled={catalogMutations.removeItem.isPending}
+                                  >
+                                    Remove
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+
+                        {editingCatalogItemId === item.id ? (
+                          <div className="space-y-3 pt-2">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <Label className="text-xs">Unit cost</Label>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.0001"
+                                  value={editItemUnitCost}
+                                  onChange={(e) => setEditItemUnitCost(e.target.value)}
+                                  placeholder="0.00"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs">Lead time (days)</Label>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={editItemLeadTime}
+                                  onChange={(e) => setEditItemLeadTime(e.target.value)}
+                                  placeholder="7"
+                                />
+                              </div>
+                            </div>
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={editItemPreferred}
+                                onChange={(e) => setEditItemPreferred(e.target.checked)}
+                              />
+                              Preferred supplier for this item
+                            </label>
+                            {catalogError ? <p className="text-sm text-red-600">{catalogError}</p> : null}
+                            <Button
+                              size="sm"
+                              onClick={() => void handleSaveCatalogItem(item)}
+                              disabled={catalogMutations.updateItem.isPending}
+                            >
+                              {catalogMutations.updateItem.isPending ? "Saving..." : "Save"}
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="text-muted-foreground text-xs space-y-0.5">
+                            <p>SKU: {item.org_item.sku}</p>
+                            {item.unit_cost ? <p>Cost: {item.unit_cost}</p> : null}
+                            {item.lead_time_days != null ? <p>Lead time: {item.lead_time_days}d</p> : null}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                    {catalogError && !addingCatalogItem && editingCatalogItemId === null ? (
+                      <p className="text-sm text-red-600">{catalogError}</p>
+                    ) : null}
+                  </>
                 ) : null}
               </div>
             </div>

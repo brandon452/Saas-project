@@ -132,6 +132,51 @@ export async function apiRequest<T>(
   return data as T
 }
 
+export async function apiRequestBlob(
+  path: string,
+  options: RequestInit = {},
+): Promise<{ blob: Blob; headers: Headers }> {
+  const cleanPath = path.startsWith("/") ? path.slice(1) : path
+  const url = `${API_BASE}/api/${cleanPath}`
+
+  const headers: Record<string, string> = {}
+  const method = (options.method ?? "GET").toUpperCase()
+
+  if (logoutInProgress && cleanPath !== "auth/logout/" && cleanPath !== "auth/login/") {
+    throw new ApiError(401, { detail: "Logout in progress." }, "Logout in progress.")
+  }
+
+  if (!SAFE_METHODS.includes(method)) {
+    Object.assign(headers, getCsrfHeader())
+  }
+
+  const res = await fetch(url, {
+    ...options,
+    credentials: "include",
+    headers: { ...headers, ...(options.headers ?? {}) },
+  })
+
+  const refreshable = cleanPath !== "auth/refresh/" && cleanPath !== "auth/login/"
+
+  if (res.status === 401 && refreshable && !logoutInProgress) {
+    const refreshed = await getRefreshPromise()
+    if (refreshed) return apiRequestBlob(path, options)
+    redirectToLogin()
+    throw new Error("Session expired.")
+  }
+
+  if (!res.ok) {
+    const text = await res.text()
+    let data: unknown
+    try { data = JSON.parse(text) } catch {
+      throw new ApiError(res.status, { detail: "Invalid server response" }, "Invalid server response")
+    }
+    throw new ApiError(res.status, data)
+  }
+
+  return { blob: await res.blob(), headers: res.headers }
+}
+
 async function attemptTokenRefresh(): Promise<boolean> {
   const res = await fetch(`${API_BASE}/api/auth/refresh/`, {
     method: "POST",

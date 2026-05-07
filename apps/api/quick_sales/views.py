@@ -77,6 +77,20 @@ class QuickSaleViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.GenericV
             for line in data["lines"]
         ]
 
+        idempotency_key = data.get("idempotency_key") or None
+
+        if idempotency_key:
+            try:
+                existing = QuickSale.objects.for_org(request.org).get(
+                    idempotency_key=idempotency_key
+                )
+                return Response(
+                    QuickSaleSerializer(existing, context={"request": request}).data,
+                    status=status.HTTP_200_OK,
+                )
+            except QuickSale.DoesNotExist:
+                pass
+
         try:
             sale = create_quick_sale(
                 org=request.org,
@@ -86,6 +100,7 @@ class QuickSaleViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.GenericV
                 notes=data.get("notes", ""),
                 occurred_at=data.get("occurred_at"),
                 performed_by=request.user,
+                idempotency_key=idempotency_key,
             )
         except DjangoValidationError as exc:
             raise DRFValidationError({"detail": exc.messages})

@@ -53,10 +53,10 @@ export default function StockMovementsPage() {
   const branch = searchParams.get("branch") ?? ""
   const item = searchParams.get("item") ?? ""
   const movementType = searchParams.get("movement_type") ?? ""
-  const fromDate = searchParams.get("from_date") ?? ""
   const toDate = searchParams.get("to_date") ?? ""
   const ordering = searchParams.get("ordering") ?? "-occurred_at"
   const page = searchParams.get("page") ?? "1"
+  const fromDate = searchParams.get("from_date") ?? ""
 
   const hasInvalidDateRange = !!fromDate && !!toDate && fromDate > toDate
   const hasInvalidItemId = !!item && !isUuid(item)

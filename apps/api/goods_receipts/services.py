@@ -1,15 +1,33 @@
 import logging
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from inventory.models import StockLedger
-from inventory.services import assert_inventory_period_open, record_stock_movement
+from inventory import signals as inventory_signals
+from inventory.api import assert_inventory_period_open, record_stock_movement
+from inventory.lot_services import get_or_create_lot, increment_lot_balance, validate_allocations_sum
+from inventory.models import GoodsReceiptLineLotAllocation, StockLedger, StockMovementLotAllocation
 from purchase_orders.models import PurchaseOrder, PurchaseOrderLine
 
 from .models import GoodsReceiptLine
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_goods_receipt_posted(*, receipt, organization_id, actor_user_id):
+    transaction.on_commit(
+        lambda: inventory_signals.goods_receipt_posted.send(
+            sender=_emit_goods_receipt_posted,
+            organization_id=str(organization_id),
+            actor_user_id=str(actor_user_id),
+            receipt_id=str(receipt.id),
+            receipt_type=receipt.receipt_type,
+            branch_id=str(receipt.branch_id) if receipt.branch_id else "",
+            supplier_id=str(receipt.supplier_id) if receipt.supplier_id else "",
+            line_count=receipt.lines.count(),
+        )
+    )
 
 
 @transaction.atomic
@@ -31,6 +49,8 @@ def post_po_receipt(receipt, lines_data, performed_by, organization):
         pl.pk: pl
         for pl in PurchaseOrderLine.objects.select_for_update().filter(pk__in=po_line_ids)
     }
+
+    lot_enabled = getattr(settings, "LOT_TRACKING_RECEIPTS_ENABLED", False)
 
     # --- Phase 1: validate all lines before writing anything ---
     seen_po_line_ids = set()
@@ -63,11 +83,21 @@ def post_po_receipt(receipt, lines_data, performed_by, organization):
             )
 
         unit_cost = line_data.get("unit_cost") or po_line.unit_price
-        validated_lines.append((po_line, quantity_received, unit_cost))
+        lot_allocs = line_data.get("lot_allocations") or []
+
+        if lot_enabled and po_line.item.is_lot_tracked:
+            if not lot_allocs:
+                raise ValidationError(
+                    f"Item '{po_line.item.sku}' is lot-tracked. "
+                    "Provide lot_allocations for this receipt line."
+                )
+            validate_allocations_sum(lot_allocs, quantity_received)
+
+        validated_lines.append((po_line, quantity_received, unit_cost, lot_allocs))
 
     # --- Phase 2: write only after all lines pass validation ---
-    for po_line, quantity_received, unit_cost in validated_lines:
-        record_stock_movement(
+    for po_line, quantity_received, unit_cost, lot_allocs in validated_lines:
+        ledger, _ = record_stock_movement(
             org=organization,
             branch=branch,
             item=po_line.item,
@@ -77,13 +107,23 @@ def post_po_receipt(receipt, lines_data, performed_by, organization):
             performed_by=performed_by,
         )
 
-        GoodsReceiptLine.objects.create(
+        gr_line = GoodsReceiptLine.objects.create(
             receipt=receipt,
             po_line=po_line,
             item=None,
             quantity_received=quantity_received,
             unit_cost=unit_cost,
         )
+
+        if lot_enabled and po_line.item.is_lot_tracked and lot_allocs:
+            _apply_receipt_lot_allocations(
+                org=organization,
+                branch=branch,
+                org_item=po_line.item,
+                gr_line=gr_line,
+                ledger=ledger,
+                lot_allocs=lot_allocs,
+            )
 
         po_line.received_quantity += quantity_received
         po_line.save(update_fields=["received_quantity"])
@@ -95,6 +135,11 @@ def post_po_receipt(receipt, lines_data, performed_by, organization):
         po.status = PurchaseOrder.PARTIALLY_RECEIVED
 
     po.save(update_fields=["status", "updated_at"])
+    _emit_goods_receipt_posted(
+        receipt=receipt,
+        organization_id=organization.id,
+        actor_user_id=performed_by.id,
+    )
     logger.info(
         "PO receipt posted for PO %s by user %s (%d lines)",
         po.po_number,
@@ -108,6 +153,8 @@ def post_direct_receipt(receipt, lines_data, performed_by, organization):
     branch = receipt.branch
 
     assert_inventory_period_open(organization, receipt.received_at)
+
+    lot_enabled = getattr(settings, "LOT_TRACKING_RECEIPTS_ENABLED", False)
 
     # --- Phase 1: validate all lines before writing anything ---
     seen_item_ids = set()
@@ -128,11 +175,21 @@ def post_direct_receipt(receipt, lines_data, performed_by, organization):
         if item.organization != organization:
             raise ValidationError(f"Item {item.pk} does not belong to this organisation.")
 
-        validated_lines.append((item, quantity_received, unit_cost))
+        lot_allocs = line_data.get("lot_allocations") or []
+
+        if lot_enabled and item.is_lot_tracked:
+            if not lot_allocs:
+                raise ValidationError(
+                    f"Item '{item.sku}' is lot-tracked. "
+                    "Provide lot_allocations for this receipt line."
+                )
+            validate_allocations_sum(lot_allocs, quantity_received)
+
+        validated_lines.append((item, quantity_received, unit_cost, lot_allocs))
 
     # --- Phase 2: write only after all lines pass validation ---
-    for item, quantity_received, unit_cost in validated_lines:
-        record_stock_movement(
+    for item, quantity_received, unit_cost, lot_allocs in validated_lines:
+        ledger, _ = record_stock_movement(
             org=organization,
             branch=branch,
             item=item,
@@ -142,7 +199,7 @@ def post_direct_receipt(receipt, lines_data, performed_by, organization):
             performed_by=performed_by,
         )
 
-        GoodsReceiptLine.objects.create(
+        gr_line = GoodsReceiptLine.objects.create(
             receipt=receipt,
             po_line=None,
             item=item,
@@ -150,9 +207,67 @@ def post_direct_receipt(receipt, lines_data, performed_by, organization):
             unit_cost=unit_cost,
         )
 
+        if lot_enabled and item.is_lot_tracked and lot_allocs:
+            _apply_receipt_lot_allocations(
+                org=organization,
+                branch=branch,
+                org_item=item,
+                gr_line=gr_line,
+                ledger=ledger,
+                lot_allocs=lot_allocs,
+            )
+
+    _emit_goods_receipt_posted(
+        receipt=receipt,
+        organization_id=organization.id,
+        actor_user_id=performed_by.id,
+    )
     logger.info(
         "Direct receipt %s posted by user %s (%d lines)",
         receipt.pk,
         performed_by,
         len(validated_lines),
     )
+
+
+# ---------------------------------------------------------------------------
+# Internal lot helpers
+# ---------------------------------------------------------------------------
+
+def _apply_receipt_lot_allocations(*, org, branch, org_item, gr_line, ledger, lot_allocs):
+    """
+    For each lot allocation in *lot_allocs* (list of dicts with keys:
+    lot_code, quantity, expiry_date?, manufacture_date?):
+      - get_or_create the InventoryLotBalance
+      - increment the lot balance
+      - create GoodsReceiptLineLotAllocation
+      - create StockMovementLotAllocation
+    """
+    from decimal import Decimal
+
+    for alloc in lot_allocs:
+        lot_code = alloc["lot_code"]
+        qty = Decimal(str(alloc["quantity"]))
+        expiry_date = alloc.get("expiry_date")
+        manufacture_date = alloc.get("manufacture_date")
+
+        lot, _ = get_or_create_lot(
+            org=org,
+            branch=branch,
+            org_item=org_item,
+            lot_code=lot_code,
+            expiry_date=expiry_date,
+            manufacture_date=manufacture_date,
+        )
+        increment_lot_balance(lot, qty)
+
+        GoodsReceiptLineLotAllocation.objects.create(
+            receipt_line=gr_line,
+            lot=lot,
+            quantity=qty,
+        )
+        StockMovementLotAllocation.objects.create(
+            ledger=ledger,
+            lot=lot,
+            quantity=qty,
+        )

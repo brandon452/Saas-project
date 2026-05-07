@@ -1,17 +1,24 @@
 from datetime import date, datetime, time
 
+from django.db.models import Q
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django_ratelimit.core import is_ratelimited
 from rest_framework import status
+from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
+from exports.audit import log_export_event
+from exports.config import get_csv_rate
+from exports.filenames import csv_filename
+from exports.rows.goods_receipts import HEADERS, to_row
+from exports.streaming import enforce_row_cap, stream_csv
 from tenancy.mixins import OrgScopedViewSetMixin
 from tenancy.permissions import IsOrgOperationalUser, RolePolicyMixin, RolePolicyPermission
-from audit.services import log_audit_event
 
 from .models import GoodsReceipt
 from .serializers import (
@@ -44,7 +51,7 @@ class GoodsReceiptViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
         qs = (
             GoodsReceipt.objects
             .for_org(self.request.org)
-            .select_related("purchase_order", "branch", "supplier", "received_by")
+            .select_related("purchase_order", "purchase_order__supplier", "branch", "supplier", "received_by")
             .prefetch_related("lines__po_line__item__master_item", "lines__item__master_item")
         )
 
@@ -58,7 +65,7 @@ class GoodsReceiptViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
 
         supplier = self.request.query_params.get("supplier")
         if supplier:
-            qs = qs.filter(supplier=supplier)
+            qs = qs.filter(Q(supplier=supplier) | Q(purchase_order__supplier=supplier))
 
         date_after_param = self.request.query_params.get("date_after")
         date_before_param = self.request.query_params.get("date_before")
@@ -122,6 +129,25 @@ class GoodsReceiptViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
         out = GoodsReceiptSerializer(serializer.instance, context={"request": request})
         return Response(out.data, status=status.HTTP_201_CREATED)
 
+    @action(detail=False, methods=["get"], url_path="export/csv")
+    def export_csv(self, request, *args, **kwargs):
+        if is_ratelimited(request, group="gr_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
+            return Response(
+                {"detail": "Too many export requests. Please wait before exporting again."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        qs = self.get_queryset().select_related("branch", "supplier", "purchase_order", "purchase_order__supplier")
+        row_count = enforce_row_cap(qs)
+        log_export_event(
+            organization=request.org,
+            actor_user=request.user,
+            resource="goods_receipt",
+            format="csv",
+            filters=dict(request.query_params),
+            row_count=row_count,
+        )
+        return stream_csv(HEADERS, (to_row(gr) for gr in qs.iterator(chunk_size=500)), csv_filename("goods-receipts"))
+
     @transaction.atomic
     def perform_create(self, serializer):
         receipt_type = self.request.data.get("receipt_type", GoodsReceipt.PO_RECEIPT)
@@ -159,20 +185,3 @@ class GoodsReceiptViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
                 )
             except DjangoValidationError as exc:
                 raise DRFValidationError({"detail": exc.messages})
-
-        log_audit_event(
-            organization=self.request.org,
-            actor_user=self.request.user,
-            event_type="goods_receipt.created",
-            resource_type="goods_receipt",
-            resource_id=receipt.id,
-            summary=f"Created goods receipt {receipt.id}",
-            metadata_json={
-                "receipt_id": str(receipt.id),
-                "receipt_type": receipt.receipt_type,
-                "branch_id": str(receipt.branch_id) if receipt.branch_id else "",
-                "supplier_id": str(receipt.supplier_id) if receipt.supplier_id else "",
-                "line_count": receipt.lines.count(),
-            },
-            diff_json=None,
-        )

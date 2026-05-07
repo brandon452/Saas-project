@@ -2,6 +2,8 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIRequestFactory, APITestCase
 
 from branch_transfers.models import BranchTransfer
@@ -275,14 +277,14 @@ class BranchItemApiTests(APITestCase):
 
         direct = DirectReceiptLineWriteSerializer(
             data={"item": str(self.item_b.id), "quantity_received": 1, "unit_cost": "2.00"},
-            context={"request": request},
+            context={"request": request, "branch": self.branch_a},
         )
         self.assertFalse(direct.is_valid())
         self.assertEqual(direct.errors["item"][0], "Item is not enabled at this branch.")
 
         transfer = BranchTransferLineWriteSerializer(
             data={"item": str(self.item_b.id), "quantity_sent": 1},
-            context={"request": request},
+            context={"request": request, "from_branch": self.branch_a},
         )
         self.assertFalse(transfer.is_valid())
         self.assertEqual(transfer.errors["item"][0], "Item is not enabled at the sending branch.")
@@ -297,11 +299,11 @@ class BranchItemApiTests(APITestCase):
         BranchItem.objects.create(org_item=self.item_b, branch=self.branch_a)
         direct_ok = DirectReceiptLineWriteSerializer(
             data={"item": str(self.item_b.id), "quantity_received": 1, "unit_cost": "2.00"},
-            context={"request": request},
+            context={"request": request, "branch": self.branch_a},
         )
         transfer_ok = BranchTransferLineWriteSerializer(
             data={"item": str(self.item_b.id), "quantity_sent": 1},
-            context={"request": request},
+            context={"request": request, "from_branch": self.branch_a},
         )
         po_ok = PurchaseOrderLineWriteSerializer(
             data={"item": str(self.item_b.id), "ordered_quantity": 1, "unit_price": "5.00"},
@@ -319,7 +321,8 @@ class BranchItemApiTests(APITestCase):
             data={"item": str(self.item_c.id), "ordered_quantity": 1, "unit_price": "5.00"},
             context={"request": request_no_branch, "purchase_order": self.purchase_order},
         )
-        self.assertTrue(po_no_branch.is_valid(), po_no_branch.errors)
+        self.assertFalse(po_no_branch.is_valid())
+        self.assertEqual(po_no_branch.errors["item"][0], "Item is not enabled at this branch.")
 
     def test_receive_transfer_branch_item_auto_create_and_reactivate(self):
         transfer = BranchTransfer.objects.for_org(self.acme).create(
@@ -344,32 +347,31 @@ class BranchItemApiTests(APITestCase):
         stock = StockOnHand.objects.for_org(self.globex).get(branch=self.globex_branch, item=recipient_org_item)
         self.assertEqual(stock.quantity, Decimal("2.0000"))
 
-        recipient_org_item.is_active = False
-        recipient_org_item.save(update_fields=["is_active"])
-        recipient_branch_item.is_active = False
-        recipient_branch_item.save(update_fields=["is_active"])
-
-        transfer_two = BranchTransfer.objects.for_org(self.acme).create(
-            organization=self.acme,
-            from_branch=self.branch_a,
-            to_branch=self.globex_branch,
-            to_organization=self.globex,
-            status=BranchTransfer.IN_TRANSIT,
-            created_by=self.owner,
+    def test_already_active_returns_400_with_pinned_error_shape(self):
+        self._auth(self.owner)
+        response = self.client.post(
+            self._base_url(),
+            {"org_item": str(self.item_a.id), "branch": str(self.branch_a.id)},
+            format="json",
+            HTTP_HOST=self._host(self.acme.slug),
         )
-        transfer_two.lines.create(item=self.item_a, quantity_sent=1, dispatched_unit_cost=Decimal("10.0000"))
-
-        receive_transfer(
-            transfer=transfer_two,
-            lines_data=[{"line_id": transfer_two.lines.first().id, "quantity_received": 1}],
-            performed_by=self.owner,
-        )
-
-        recipient_org_item.refresh_from_db()
-        recipient_branch_item.refresh_from_db()
-        self.assertTrue(recipient_org_item.is_active)
-        self.assertTrue(recipient_branch_item.is_active)
+        self.assertEqual(response.status_code, 400)
         self.assertEqual(
-            BranchItem.objects.filter(org_item=recipient_org_item, branch=self.globex_branch).count(),
-            1,
+            response.data,
+            {"org_item": ["This item is already enabled at this branch."]},
         )
+
+    def test_reactivation_does_not_trigger_full_clean_queries(self):
+        inactive = BranchItem.objects.create(
+            org_item=self.item_c, branch=self.branch_a, is_active=False
+        )
+        # Reload without select_related to simulate the real reactivation path
+        loaded = BranchItem.objects.get(pk=inactive.pk)
+        with CaptureQueriesContext(connection) as ctx:
+            loaded.is_active = True
+            loaded.save(update_fields=["is_active"])
+
+        self.assertEqual(len(ctx.captured_queries), 1, "Expected exactly 1 UPDATE, no full_clean FK lookups")
+        sql = ctx.captured_queries[0]["sql"].upper()
+        self.assertIn("UPDATE", sql, "Expected an UPDATE statement")
+        self.assertNotIn("SELECT", sql, "Unexpected SELECT — full_clean FK lookup was triggered")

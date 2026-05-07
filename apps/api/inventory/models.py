@@ -48,6 +48,8 @@ class OrgItem(TenantModel):
     )
     name = models.CharField(max_length=255, blank=True)
     is_active = models.BooleanField(default=True)
+    is_lot_tracked = models.BooleanField(default=False)
+    is_expiry_tracked = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -72,6 +74,15 @@ class OrgItem(TenantModel):
 
 
 class BranchItem(models.Model):
+    CLASS_A = "A"
+    CLASS_B = "B"
+    CLASS_C = "C"
+    ITEM_CLASS_CHOICES = [
+        (CLASS_A, "A"),
+        (CLASS_B, "B"),
+        (CLASS_C, "C"),
+    ]
+
     org_item = models.ForeignKey(
         OrgItem,
         on_delete=models.PROTECT,
@@ -82,6 +93,13 @@ class BranchItem(models.Model):
         on_delete=models.PROTECT,
         related_name="branch_items",
     )
+    item_class = models.CharField(
+        max_length=1,
+        choices=ITEM_CLASS_CHOICES,
+        null=True,
+        blank=True,
+    )
+    next_cycle_count_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -100,7 +118,8 @@ class BranchItem(models.Model):
                 raise ValidationError("Branch and OrgItem must belong to the same organisation.")
 
     def save(self, *args, **kwargs):
-        self.full_clean()
+        if not self.pk:  # cross-org check only needed at creation; branch/org_item are immutable after that
+            self.full_clean()
         return super().save(*args, **kwargs)
 
     def __str__(self):
@@ -180,6 +199,20 @@ class StockTake(TenantModel):
     COMPLETED = "COMPLETED"
     COMPLETED_WITH_VARIANCES = "COMPLETED_WITH_VARIANCES"
     CANCELLED = "CANCELLED"
+    TYPE_FULL = "FULL"
+    TYPE_CYCLE = "CYCLE"
+    STOCK_TAKE_TYPE_CHOICES = [
+        (TYPE_FULL, "Full"),
+        (TYPE_CYCLE, "Cycle"),
+    ]
+    CYCLE_CLASS_A = "A"
+    CYCLE_CLASS_B = "B"
+    CYCLE_CLASS_C = "C"
+    CYCLE_ITEM_CLASS_CHOICES = [
+        (CYCLE_CLASS_A, "A"),
+        (CYCLE_CLASS_B, "B"),
+        (CYCLE_CLASS_C, "C"),
+    ]
 
     STATUS_CHOICES = [
         (DRAFT, "Draft"),
@@ -212,6 +245,18 @@ class StockTake(TenantModel):
         default=DRAFT,
     )
     notes = models.TextField(blank=True)
+    stock_take_type = models.CharField(
+        max_length=10,
+        choices=STOCK_TAKE_TYPE_CHOICES,
+        default=TYPE_FULL,
+    )
+    cycle_item_class = models.CharField(
+        max_length=1,
+        choices=CYCLE_ITEM_CLASS_CHOICES,
+        null=True,
+        blank=True,
+    )
+    scheduled_for = models.DateField(null=True, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -272,15 +317,35 @@ class StockTake(TenantModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["organization", "branch"],
-                condition=Q(status="IN_PROGRESS"),
-                name="unique_in_progress_stock_take_per_branch",
-            )
+                condition=Q(status="IN_PROGRESS", stock_take_type="FULL"),
+                name="unique_in_progress_full_stock_take_per_branch",
+            ),
+            models.UniqueConstraint(
+                fields=["organization", "branch", "cycle_item_class"],
+                condition=Q(status="IN_PROGRESS", stock_take_type="CYCLE"),
+                name="unique_in_progress_cycle_stock_take_per_branch_class",
+            ),
+            models.UniqueConstraint(
+                fields=["organization", "branch", "cycle_item_class", "scheduled_for"],
+                condition=Q(stock_take_type="CYCLE"),
+                name="unique_cycle_stock_take_per_branch_class_scheduled_for",
+            ),
         ]
 
     def clean(self):
         if self.branch_id and self.organization_id:
             if self.branch.organization_id != self.organization_id:
                 raise ValidationError("Branch must belong to the same organisation as this stock take.")
+        if self.stock_take_type == self.TYPE_FULL:
+            if self.cycle_item_class is not None:
+                raise ValidationError("cycle_item_class must be null for FULL stock takes.")
+            if self.scheduled_for is not None:
+                raise ValidationError("scheduled_for must be null for FULL stock takes.")
+        if self.stock_take_type == self.TYPE_CYCLE:
+            if not self.cycle_item_class:
+                raise ValidationError("cycle_item_class is required for CYCLE stock takes.")
+            if self.scheduled_for is None:
+                raise ValidationError("scheduled_for is required for CYCLE stock takes.")
 
     def save(self, *args, **kwargs):
         update_fields = kwargs.get("update_fields")
@@ -390,6 +455,166 @@ class InventoryClosePeriod(TenantModel):
                 name="inventory_close_period_valid_status",
             )
         ]
+
+
+class InventoryLotBalance(TenantModel):
+    """
+    Per-lot stock balance for lot/batch tracked items.
+    One row per (organization, branch, org_item, lot_code).
+    """
+
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="lot_balances")
+    org_item = models.ForeignKey(OrgItem, on_delete=models.PROTECT, related_name="lot_balances")
+    lot_code = models.CharField(max_length=100)
+    expiry_date = models.DateField(null=True, blank=True)
+    manufacture_date = models.DateField(null=True, blank=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+    available_qty = models.DecimalField(max_digits=12, decimal_places=4, default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "branch", "org_item", "lot_code"],
+                name="unique_lot_balance_per_org_branch_item_code",
+            ),
+            models.CheckConstraint(
+                check=Q(available_qty__gte=0),
+                name="lot_balance_non_negative_qty",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "branch", "org_item", "expiry_date", "received_at"],
+                name="inv_lotbal_fefo_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Lot {self.lot_code} | {self.org_item} | {self.branch} | qty={self.available_qty}"
+
+
+class GoodsReceiptLineLotAllocation(models.Model):
+    """Child allocation linking a goods receipt line to a lot balance."""
+
+    receipt_line = models.ForeignKey(
+        "goods_receipts.GoodsReceiptLine",
+        on_delete=models.CASCADE,
+        related_name="lot_allocations",
+    )
+    lot = models.ForeignKey(
+        InventoryLotBalance,
+        on_delete=models.PROTECT,
+        related_name="receipt_allocations",
+    )
+    quantity = models.DecimalField(max_digits=12, decimal_places=4)
+
+    def __str__(self):
+        return f"GRLotAlloc receipt_line={self.receipt_line_id} lot={self.lot_id} qty={self.quantity}"
+
+
+class BranchTransferLineDispatchLotAllocation(models.Model):
+    """Child allocation linking a dispatch line to a lot depleted at source."""
+
+    transfer_line = models.ForeignKey(
+        "branch_transfers.BranchTransferLine",
+        on_delete=models.CASCADE,
+        related_name="dispatch_lot_allocations",
+    )
+    lot = models.ForeignKey(
+        InventoryLotBalance,
+        on_delete=models.PROTECT,
+        related_name="transfer_dispatch_allocations",
+    )
+    quantity = models.DecimalField(max_digits=12, decimal_places=4)
+
+    def __str__(self):
+        return f"DispatchLotAlloc line={self.transfer_line_id} lot={self.lot_id} qty={self.quantity}"
+
+
+class BranchTransferLineReceiveLotAllocation(models.Model):
+    """Child allocation linking a receive line to a lot incremented at destination."""
+
+    transfer_line = models.ForeignKey(
+        "branch_transfers.BranchTransferLine",
+        on_delete=models.CASCADE,
+        related_name="receive_lot_allocations",
+    )
+    lot = models.ForeignKey(
+        InventoryLotBalance,
+        on_delete=models.PROTECT,
+        related_name="transfer_receive_allocations",
+    )
+    quantity = models.DecimalField(max_digits=12, decimal_places=4)
+
+    def __str__(self):
+        return f"ReceiveLotAlloc line={self.transfer_line_id} lot={self.lot_id} qty={self.quantity}"
+
+
+class StockMovementLotAllocation(models.Model):
+    """Links a StockLedger row to a lot (unsigned magnitude)."""
+
+    ledger = models.ForeignKey(
+        StockLedger,
+        on_delete=models.CASCADE,
+        related_name="lot_allocations",
+    )
+    lot = models.ForeignKey(
+        InventoryLotBalance,
+        on_delete=models.PROTECT,
+        related_name="movement_allocations",
+    )
+    quantity = models.DecimalField(max_digits=12, decimal_places=4)
+
+    def __str__(self):
+        return f"MovementLotAlloc ledger={self.ledger_id} lot={self.lot_id} qty={self.quantity}"
+
+
+class StockTakeLineLotAllocation(models.Model):
+    """
+    Lot-level variance allocation for stock-take lines.
+    Submitted during PENDING_APPROVAL, applied during approval.
+    """
+
+    INCREASE = "INCREASE"
+    DECREASE = "DECREASE"
+    DIRECTION_CHOICES = [(INCREASE, "Increase"), (DECREASE, "Decrease")]
+
+    stock_take_line = models.ForeignKey(
+        StockTakeLine,
+        on_delete=models.CASCADE,
+        related_name="lot_allocations",
+    )
+    direction = models.CharField(max_length=10, choices=DIRECTION_CHOICES)
+    quantity = models.DecimalField(max_digits=12, decimal_places=4)
+
+    # Points to an existing lot (nullable — new lots are created from draft fields)
+    lot = models.ForeignKey(
+        InventoryLotBalance,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="stock_take_allocations",
+    )
+
+    # Draft lot fields for new-lot creation
+    lot_code = models.CharField(max_length=100, blank=True)
+    expiry_date = models.DateField(null=True, blank=True)
+    manufacture_date = models.DateField(null=True, blank=True)
+
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="stock_take_lot_allocations",
+    )
+    submitted_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return (
+            f"STLineLotAlloc line={self.stock_take_line_id} "
+            f"direction={self.direction} qty={self.quantity}"
+        )
 
 
 class InventoryCloseSnapshot(TenantModel):

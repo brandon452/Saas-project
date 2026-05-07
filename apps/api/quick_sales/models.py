@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 
 from tenancy.models import TenantModel
 
@@ -41,9 +42,17 @@ class QuickSale(TenantModel):
         related_name="quick_sales_voided",
     )
     voided_at = models.DateTimeField(null=True, blank=True)
+    idempotency_key = models.CharField(max_length=255, null=True, blank=True, db_index=True)
 
     class Meta:
         ordering = ["-occurred_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "idempotency_key"],
+                condition=Q(idempotency_key__isnull=False),
+                name="unique_quicksale_org_idempotency_key",
+            )
+        ]
 
 
 class QuickSaleLine(models.Model):

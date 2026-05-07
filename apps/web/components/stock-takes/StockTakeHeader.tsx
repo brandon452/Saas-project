@@ -117,6 +117,9 @@ export function StockTakeHeader({ orgId, stockTake, onChanged }: StockTakeHeader
             </div>
             <div className="grid gap-2 text-sm text-muted-foreground md:grid-cols-2">
               <p>Branch: {branchLabel}</p>
+              <p>Type: {stockTake.stock_take_type}</p>
+              <p>Cycle class: {stockTake.cycle_item_class ?? "\u2014"}</p>
+              <p>Scheduled for: {formatDateTime(stockTake.scheduled_for)}</p>
               <p>Created: {formatDateTime(stockTake.created_at)}</p>
               <p>Started: {formatDateTime(stockTake.started_at)}</p>
               <p>Snapshot taken: {formatDateTime(stockTake.snapshot_taken_at)}</p>

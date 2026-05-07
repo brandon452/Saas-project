@@ -1,4 +1,7 @@
 from django.contrib.auth import get_user_model
+from django.db import connection
+from django.db.models import Prefetch
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APITestCase
 
 from branches.models import Branch
@@ -166,7 +169,7 @@ class BranchItemCatalogApiTests(APITestCase):
         enabled_row = result_map[str(self.enabled_item.id)]
         self.assertEqual(
             set(enabled_row.keys()),
-            {"id", "name", "sku", "is_enabled", "branch_item_id"},
+            {"id", "name", "sku", "is_enabled", "branch_item_id", "item_class"},
         )
         self.assertEqual(enabled_row["name"], self.enabled_item.display_name)
         self.assertEqual(enabled_row["sku"], self.enabled_item.master_item.sku)
@@ -176,6 +179,7 @@ class BranchItemCatalogApiTests(APITestCase):
         no_branch_row = result_map[str(self.no_branch_item.id)]
         self.assertFalse(no_branch_row["is_enabled"])
         self.assertIsNone(no_branch_row["branch_item_id"])
+        self.assertIsNone(no_branch_row["item_class"])
 
         inactive_branch_row = result_map[str(self.inactive_branch_only.id)]
         self.assertFalse(inactive_branch_row["is_enabled"])
@@ -242,3 +246,33 @@ class BranchItemCatalogApiTests(APITestCase):
         self.assertEqual(response.data["count"], 63)
         self.assertEqual(len(response.data["results"]), 13)
         self.assertIsNotNone(response.data["previous"])
+
+    def test_catalog_uses_prefetch_not_correlated_subqueries(self):
+        with CaptureQueriesContext(connection) as ctx:
+            list(
+                OrgItem.objects.for_org(self.acme)
+                .filter(is_active=True)
+                .select_related("master_item")
+                .prefetch_related(
+                    Prefetch(
+                        "branch_items",
+                        queryset=BranchItem.objects.filter(branch=self.branch_a, is_active=True),
+                        to_attr="active_branch_items",
+                    )
+                )
+            )
+
+        # At most 2 queries: one main OrgItem query + one BranchItem prefetch batch
+        self.assertLessEqual(len(ctx.captured_queries), 2)
+
+        # The BranchItem query must use IN (batch prefetch), not a correlated subquery per row
+        branch_item_sqls = [
+            q["sql"] for q in ctx.captured_queries
+            if "branchitem" in q["sql"].lower() or "branch_item" in q["sql"].lower()
+        ]
+        self.assertEqual(len(branch_item_sqls), 1, "Expected exactly one BranchItem batch query")
+        self.assertIn(
+            " IN ",
+            branch_item_sqls[0].upper(),
+            "BranchItem query should use IN (prefetch batch), not a per-row subquery",
+        )

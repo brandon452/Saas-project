@@ -158,6 +158,7 @@ class BranchTransferCreateSerializer(serializers.ModelSerializer):
 class BranchTransferReceiveSerializer(serializers.Serializer):
     lines = BranchTransferReceiveLineSerializer(many=True)
     notes = serializers.CharField(required=False, allow_blank=True)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, allow_null=True, default=None, max_length=255)
 
     def validate_lines(self, value):
         if not value:

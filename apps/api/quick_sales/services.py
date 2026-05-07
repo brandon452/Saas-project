@@ -1,9 +1,14 @@
+from decimal import Decimal
+
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from inventory.models import StockLedger
-from inventory.services import assert_inventory_period_open, record_stock_movement
+from inventory import signals as inventory_signals
+from inventory.api import assert_inventory_period_open, record_stock_movement
+from inventory.lot_services import allocate_lots_fefo_fifo, deplete_lot_balance
+from inventory.models import StockLedger, StockMovementLotAllocation
 
 from .models import QuickSale, QuickSaleLine
 
@@ -18,10 +23,17 @@ def create_quick_sale(
     notes="",
     occurred_at=None,
     performed_by=None,
+    idempotency_key=None,
 ):
     effective_at = occurred_at or timezone.now()
     if effective_at > timezone.now():
         raise ValidationError("Sale date and time cannot be in the future.")
+
+    if idempotency_key:
+        try:
+            return QuickSale.objects.get(organization=org, idempotency_key=idempotency_key)
+        except QuickSale.DoesNotExist:
+            pass
 
     sale = QuickSale.objects.create(
         organization=org,
@@ -31,14 +43,20 @@ def create_quick_sale(
         occurred_at=effective_at,
         sold_by=performed_by,
         status=QuickSale.STATUS_CONFIRMED,
+        idempotency_key=idempotency_key or None,
     )
 
+    lot_enabled = getattr(settings, "LOT_TRACKING_QUICK_SALES_ENABLED", False)
+
     for line_data in lines:
+        item = line_data["item"]
+        qty = Decimal(str(line_data["quantity"]))
+
         ledger, _ = record_stock_movement(
             org=org,
             branch=branch,
-            item=line_data["item"],
-            quantity=-line_data["quantity"],
+            item=item,
+            quantity=-qty,
             movement_type=StockLedger.MOVEMENT_ISSUE,
             performed_by=performed_by,
             reference_type="QUICK_SALE",
@@ -47,12 +65,43 @@ def create_quick_sale(
         )
         QuickSaleLine.objects.create(
             sale=sale,
-            item=line_data["item"],
-            quantity=line_data["quantity"],
+            item=item,
+            quantity=qty,
             unit_price=line_data["unit_price"],
             unit_cost=ledger.unit_cost,
         )
 
+        # Lot tracking: auto-allocate via FEFO/FIFO and deplete lots
+        if lot_enabled and item.is_lot_tracked:
+            try:
+                lot_allocations = allocate_lots_fefo_fifo(
+                    org=org,
+                    branch=branch,
+                    item=item,
+                    quantity=qty,
+                )
+            except ValidationError as exc:
+                raise ValidationError(
+                    f"Lot allocation failed for '{item.sku}': " + " ".join(exc.messages)
+                )
+            for lot, alloc_qty in lot_allocations:
+                deplete_lot_balance(lot, alloc_qty)
+                StockMovementLotAllocation.objects.create(
+                    ledger=ledger,
+                    lot=lot,
+                    quantity=alloc_qty,
+                )
+
+    transaction.on_commit(
+        lambda: inventory_signals.quick_sale_created.send(
+            sender=create_quick_sale,
+            organization_id=str(org.id),
+            actor_user_id=str(performed_by.id) if performed_by else "",
+            sale_id=str(sale.id),
+            branch_id=str(branch.id),
+            line_count=len(lines),
+        )
+    )
     return sale
 
 
@@ -83,5 +132,14 @@ def void_quick_sale(org, quick_sale, *, performed_by=None):
     quick_sale.voided_by = performed_by
     quick_sale.voided_at = voided_at
     quick_sale.save(update_fields=["status", "voided_by", "voided_at"])
+    transaction.on_commit(
+        lambda: inventory_signals.quick_sale_voided.send(
+            sender=void_quick_sale,
+            organization_id=str(org.id),
+            actor_user_id=str(performed_by.id) if performed_by else "",
+            sale_id=str(quick_sale.id),
+            branch_id=str(quick_sale.branch_id),
+        )
+    )
 
     return quick_sale

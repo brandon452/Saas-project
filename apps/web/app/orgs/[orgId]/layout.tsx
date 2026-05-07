@@ -1,6 +1,7 @@
 import { OrgAccessGuard } from "@/components/auth/OrgAccessGuard"
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
 import { AppSidebar } from "@/components/layout/AppSidebar"
+import { OrgTimezoneCookie } from "@/components/OrgTimezoneCookie"
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 
 export default function OrgLayout({
@@ -19,6 +20,7 @@ export default function OrgLayout({
             </header>
             <main className="flex-1 overflow-y-auto p-6">
               <OrgAccessGuard>{children}</OrgAccessGuard>
+              <OrgTimezoneCookie />
             </main>
           </div>
         </div>

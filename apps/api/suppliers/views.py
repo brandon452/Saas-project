@@ -1,20 +1,27 @@
 from django.db import IntegrityError, transaction
+from django_ratelimit.core import is_ratelimited
 from rest_framework import mixins, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
+from audit.services import changed_field_diff, log_audit_event
+from exports.audit import log_export_event
+from exports.config import get_csv_rate
+from exports.filenames import csv_filename
+from exports.rows.suppliers import HEADERS, to_row
+from exports.streaming import enforce_row_cap, stream_csv
 from tenancy.mixins import OrgScopedViewSetMixin
 from tenancy.models import Organization
 from tenancy.permissions import RolePolicyMixin, get_org_membership, get_parent_membership
-from audit.services import changed_field_diff, log_audit_event
 
-from .models import Supplier, SupplierContact
+from .models import Supplier, SupplierContact, SupplierItem
 from .serializers import (
     SupplierContactSerializer,
     SupplierContactWriteSerializer,
     SupplierDeactivateSerializer,
+    SupplierItemSerializer,
     SupplierReactivateSerializer,
     SupplierSerializer,
     SupplierWriteSerializer,
@@ -50,7 +57,7 @@ class SupplierViewSet(
     ]
     permission_resource = "suppliers"
     queryset = Supplier.all_objects.none()
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
         qs = Supplier.objects.for_org(self.request.org).prefetch_related("contacts")
@@ -159,6 +166,25 @@ class SupplierViewSet(
                 metadata_json={"supplier_id": str(supplier.id)},
                 diff_json=diff,
             )
+
+    @action(detail=False, methods=["get"], url_path="export/csv")
+    def export_csv(self, request, *args, **kwargs):
+        if is_ratelimited(request, group="supplier_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
+            return Response(
+                {"detail": "Too many export requests. Please wait before exporting again."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        qs = self.get_queryset()
+        row_count = enforce_row_cap(qs)
+        log_export_event(
+            organization=request.org,
+            actor_user=request.user,
+            resource="supplier",
+            format="csv",
+            filters=dict(request.query_params),
+            row_count=row_count,
+        )
+        return stream_csv(HEADERS, (to_row(s) for s in qs.iterator(chunk_size=500)), csv_filename("suppliers"))
 
     @action(detail=True, methods=["patch"], url_path="deactivate")
     def deactivate(self, request, *args, **kwargs):
@@ -292,3 +318,80 @@ class SupplierViewSet(
             contact.save(update_fields=["is_primary", "is_active", "updated_at"])
 
         return Response(SupplierContactSerializer(contact).data)
+
+    # -------------------------------------------------------------------------
+    # Catalog (SupplierItem) sub-resource
+    # -------------------------------------------------------------------------
+
+    def _check_can_mutate_catalog(self, request):
+        from rest_framework.exceptions import PermissionDenied
+        from tenancy.models import ParentCompanyMember
+        parent = get_parent_membership(request)
+        if parent and parent.role == ParentCompanyMember.PARENT_ADMIN:
+            return
+        membership = get_org_membership(request)
+        if not membership or membership.role not in ("OWNER", "ADMIN"):
+            raise PermissionDenied("Only OWNER or ADMIN can manage the supplier catalog.")
+
+    def _get_supplier_item(self, supplier, supplier_item_id):
+        from rest_framework.exceptions import NotFound
+        try:
+            return SupplierItem.objects.get(pk=supplier_item_id, supplier=supplier, is_active=True)
+        except SupplierItem.DoesNotExist:
+            raise NotFound()
+
+    @action(detail=True, methods=["get", "post"], url_path="items")
+    def catalog_items(self, request, *args, **kwargs):
+        supplier = self.get_object()
+
+        if request.method == "GET":
+            qs = SupplierItem.objects.filter(supplier=supplier, is_active=True).select_related(
+                "org_item__master_item"
+            )
+            serializer = SupplierItemSerializer(
+                qs, many=True, context={"request": request, "supplier": supplier}
+            )
+            return Response(serializer.data)
+
+        # POST — add item to catalog
+        self._check_can_mutate_catalog(request)
+        serializer = SupplierItemSerializer(
+            data=request.data, context={"request": request, "supplier": supplier}
+        )
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(organization=request.org)
+        resp_status = (
+            status.HTTP_200_OK if getattr(serializer, "_reactivated", False) else status.HTTP_201_CREATED
+        )
+        return Response(
+            SupplierItemSerializer(instance, context={"request": request, "supplier": supplier}).data,
+            status=resp_status,
+        )
+
+    @action(
+        detail=True,
+        methods=["patch", "delete"],
+        url_path=r"items/(?P<supplier_item_id>[0-9]+)",
+    )
+    def catalog_item_detail(self, request, supplier_item_id=None, *args, **kwargs):
+        self._check_can_mutate_catalog(request)
+        supplier = self.get_object()
+        item = self._get_supplier_item(supplier, supplier_item_id)
+
+        if request.method == "DELETE":
+            item.is_active = False
+            item.save(update_fields=["is_active", "updated_at"])
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        # PATCH
+        serializer = SupplierItemSerializer(
+            item,
+            data=request.data,
+            partial=True,
+            context={"request": request, "supplier": supplier},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(
+            SupplierItemSerializer(item, context={"request": request, "supplier": supplier}).data
+        )

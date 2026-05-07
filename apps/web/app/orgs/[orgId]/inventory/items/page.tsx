@@ -19,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { useGRSuppliers } from "@/lib/hooks/goods-receipts/useGRSuppliers"
 import { useOrgItems } from "@/lib/hooks/org-items/useOrgItems"
 import { useOrg } from "@/lib/hooks/useOrg"
 import type { OrgItem } from "@/lib/types/org-items"
@@ -37,13 +38,20 @@ export default function OrgItemsPage() {
   const search = searchParams.get("search") ?? ""
   const isActive = searchParams.get("is_active") === "false" ? "false" : "true"
   const page = searchParams.get("page") ?? "1"
+  const supplier = searchParams.get("supplier") ?? ""
+  const hasPrefSupplier = searchParams.get("has_preferred_supplier") ?? ""
 
   const orgItemsQuery = useOrgItems({
     orgId,
     search: search || undefined,
     is_active: isActive,
     page,
+    supplier: supplier || undefined,
+    has_preferred_supplier: (hasPrefSupplier as "true" | "false") || undefined,
   })
+
+  const suppliersQuery = useGRSuppliers(orgId)
+  const suppliers = suppliersQuery.data ?? []
 
   useEffect(() => {
     if (!searchParams.get("is_active")) {
@@ -117,7 +125,10 @@ export default function OrgItemsPage() {
   const errorMessage = orgItemsQuery.error instanceof Error ? orgItemsQuery.error.message : ""
 
   const columns = useMemo(
-    () => (canEdit ? ["Name", "SKU", "Status", "Created", "Actions"] : ["Name", "SKU", "Status", "Created"]),
+    () =>
+      canEdit
+        ? ["Name", "SKU", "Preferred Supplier", "Status", "Created", "Actions"]
+        : ["Name", "SKU", "Preferred Supplier", "Status", "Created"],
     [canEdit],
   )
 
@@ -172,7 +183,14 @@ export default function OrgItemsPage() {
             Browse and maintain the items activated for this organisation.
           </p>
         </div>
-        {canEdit ? <Button onClick={() => setActivateOpen(true)}>Activate Item</Button> : null}
+        {canEdit ? (
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => router.push(`/orgs/${orgId}/inventory/items/activate`)}>
+              Bulk Add
+            </Button>
+            <Button onClick={() => setActivateOpen(true)}>Add to Catalog</Button>
+          </div>
+        ) : null}
       </div>
 
       <div className="grid gap-4 rounded-xl border border-border bg-card p-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))]">
@@ -202,6 +220,44 @@ export default function OrgItemsPage() {
             />
             <span>Show inactive</span>
           </label>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="org-item-no-preferred">Supplier coverage</Label>
+          <label className="flex h-10 items-center gap-3 rounded-md border border-input bg-background px-3 text-sm">
+            <input
+              id="org-item-no-preferred"
+              type="checkbox"
+              checked={hasPrefSupplier === "false"}
+              onChange={(event) =>
+                updateParams({
+                  has_preferred_supplier: event.target.checked ? "false" : null,
+                  page: "1",
+                })
+              }
+            />
+            <span>No preferred supplier</span>
+          </label>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="org-item-supplier">Supplier</Label>
+          <select
+            id="org-item-supplier"
+            value={supplier}
+            disabled={suppliersQuery.isLoading}
+            onChange={(event) =>
+              updateParams({ supplier: event.target.value || null, page: "1" })
+            }
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <option value="">All suppliers</option>
+            {suppliers.map((s) => (
+              <option key={s.id} value={String(s.id)}>
+                {s.display_name}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -241,6 +297,9 @@ export default function OrgItemsPage() {
                       </button>
                     </TableCell>
                     <TableCell className="font-mono">{item.sku}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {item.preferred_supplier?.display_name ?? <span className="italic text-muted-foreground/50">—</span>}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={item.is_active ? "default" : "secondary"}>
                         {item.is_active ? "Active" : "Inactive"}

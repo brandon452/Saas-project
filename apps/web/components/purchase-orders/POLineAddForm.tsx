@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { usePOItemSearch } from "@/lib/hooks/purchase-orders/usePOItemSearch"
+import { useSupplierItems } from "@/lib/hooks/suppliers/useSupplierItems"
 import type { Item } from "@/lib/types/purchase-orders"
 import { formatPOValue } from "@/lib/utils/po"
 
@@ -19,6 +20,7 @@ interface AddLinePayload {
 
 interface POLineAddFormProps {
   orgId: string
+  supplierId: string
   existingItemIds: string[]
   onAddLine: (payload: AddLinePayload) => void
   disabled?: boolean
@@ -27,6 +29,7 @@ interface POLineAddFormProps {
 
 export function POLineAddForm({
   orgId,
+  supplierId,
   existingItemIds,
   onAddLine,
   disabled,
@@ -38,6 +41,8 @@ export function POLineAddForm({
   const [orderedQuantity, setOrderedQuantity] = useState("1")
   const [unitPrice, setUnitPrice] = useState("0.00")
   const [error, setError] = useState("")
+
+  const { data: catalogItems } = useSupplierItems(orgId, supplierId)
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query), 300)
@@ -129,6 +134,10 @@ export function POLineAddForm({
                     setSelectedItem(item)
                     setQuery(item.name)
                     setError("")
+                    const catalogEntry = catalogItems?.find((ci) => ci.org_item.id === item.id)
+                    if (catalogEntry?.unit_cost) {
+                      setUnitPrice(Number.parseFloat(catalogEntry.unit_cost).toFixed(2))
+                    }
                   }}
                   disabled={disabled}
                 >

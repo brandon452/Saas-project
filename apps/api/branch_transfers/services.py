@@ -1,12 +1,30 @@
 import logging
 from decimal import Decimal
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from inventory.models import BranchItem, InventoryCostState, OrgItem, StockLedger
-from inventory.services import assert_inventory_period_open, record_stock_movement
+from inventory import signals as inventory_signals
+from inventory.api import assert_inventory_period_open, record_stock_movement
+from inventory.lot_services import (
+    allocate_lots_fefo_fifo,
+    deplete_lot_balance,
+    get_or_create_lot,
+    increment_lot_balance,
+    validate_allocations_sum,
+)
+from inventory.models import (
+    BranchItem,
+    BranchTransferLineDispatchLotAllocation,
+    BranchTransferLineReceiveLotAllocation,
+    InventoryCostState,
+    InventoryLotBalance,
+    OrgItem,
+    StockLedger,
+    StockMovementLotAllocation,
+)
 
 from .models import BranchTransfer, BranchTransferLine
 
@@ -65,6 +83,8 @@ def dispatch_transfer(transfer, performed_by, idempotency_key=None):
 
     assert_inventory_period_open(transfer.organization, timezone.now())
 
+    lot_enabled = getattr(settings, "LOT_TRACKING_TRANSFERS_ENABLED", False)
+
     for line in lines:
         sku = line.item.sku
         name = line.item.display_name
@@ -87,7 +107,7 @@ def dispatch_transfer(transfer, performed_by, idempotency_key=None):
 
         ikey = f"{idempotency_key}:line:{line.pk}" if idempotency_key is not None else None
         try:
-            record_stock_movement(
+            ledger, _ = record_stock_movement(
                 org=transfer.organization,
                 item=line.item,
                 branch=transfer.from_branch,
@@ -101,15 +121,52 @@ def dispatch_transfer(transfer, performed_by, idempotency_key=None):
                 f"Cannot dispatch line for {sku} ({name}): " + " ".join(exc.messages)
             )
 
+        # Lot tracking: auto-allocate via FEFO/FIFO and deplete source lots
+        if lot_enabled and line.item.is_lot_tracked:
+            try:
+                lot_allocations = allocate_lots_fefo_fifo(
+                    org=transfer.organization,
+                    branch=transfer.from_branch,
+                    item=line.item,
+                    quantity=Decimal(str(line.quantity_sent)),
+                )
+            except ValidationError as exc:
+                raise ValidationError(
+                    f"Lot allocation failed for {sku} ({name}): " + " ".join(exc.messages)
+                )
+            for lot, alloc_qty in lot_allocations:
+                deplete_lot_balance(lot, alloc_qty)
+                BranchTransferLineDispatchLotAllocation.objects.create(
+                    transfer_line=line,
+                    lot=lot,
+                    quantity=alloc_qty,
+                )
+                StockMovementLotAllocation.objects.create(
+                    ledger=ledger,
+                    lot=lot,
+                    quantity=alloc_qty,
+                )
+
     transfer.status = BranchTransfer.IN_TRANSIT
     transfer.dispatched_by = performed_by
     transfer.dispatched_at = timezone.now()
     transfer.save(update_fields=["status", "dispatched_by", "dispatched_at", "updated_at"])
+    transaction.on_commit(
+        lambda: inventory_signals.branch_transfer_dispatched.send(
+            sender=dispatch_transfer,
+            organization_id=str(transfer.organization_id),
+            actor_user_id=str(performed_by.id),
+            transfer_id=str(transfer.id),
+            before_status=BranchTransfer.APPROVED,
+            after_status=transfer.status,
+        )
+    )
     logger.info("Transfer %s dispatched by user %s", transfer.pk, performed_by)
 
 
 @transaction.atomic
-def receive_transfer(transfer, lines_data, performed_by, receive_notes="", idempotency_key=None):
+def receive_transfer(transfer, lines_data, performed_by, receive_notes="", idempotency_key=None,
+                     lot_override=False, lot_override_reason=""):
     transfer = BranchTransfer.objects.select_for_update().get(pk=transfer.pk)
 
     if transfer.status != BranchTransfer.IN_TRANSIT:
@@ -127,6 +184,8 @@ def receive_transfer(transfer, lines_data, performed_by, receive_notes="", idemp
         raise ValidationError(f"Cannot receive a transfer with status {transfer.status}.")
 
     assert_inventory_period_open(transfer.to_organization, timezone.now())
+
+    lot_enabled = getattr(settings, "LOT_TRACKING_TRANSFERS_ENABLED", False)
 
     all_transfer_lines = list(
         BranchTransferLine.objects.select_for_update().filter(transfer=transfer)
@@ -166,7 +225,7 @@ def receive_transfer(transfer, lines_data, performed_by, receive_notes="", idemp
                 branch=transfer.to_branch,
             )
             ikey = f"{idempotency_key}:line:{line.pk}" if idempotency_key is not None else None
-            record_stock_movement(
+            ledger, _ = record_stock_movement(
                 org=transfer.to_organization,
                 item=recipient_item,
                 branch=transfer.to_branch,
@@ -177,6 +236,18 @@ def receive_transfer(transfer, lines_data, performed_by, receive_notes="", idemp
                 performed_by=performed_by,
                 idempotency_key=ikey,
             )
+
+            # Lot tracking: preserve lot identity from dispatch allocations
+            if lot_enabled and line.item.is_lot_tracked:
+                _apply_receive_lot_allocations(
+                    transfer=transfer,
+                    line=line,
+                    recipient_item=recipient_item,
+                    ledger=ledger,
+                    quantity_received=Decimal(str(quantity_received)),
+                    lot_override=lot_override,
+                    lot_override_reason=lot_override_reason,
+                )
 
         line.quantity_received = quantity_received
         line.save(update_fields=["quantity_received"])
@@ -200,9 +271,111 @@ def receive_transfer(transfer, lines_data, performed_by, receive_notes="", idemp
             "updated_at",
         ]
     )
+    transaction.on_commit(
+        lambda: inventory_signals.branch_transfer_received.send(
+            sender=receive_transfer,
+            organization_id=str(transfer.to_organization_id),
+            actor_user_id=str(performed_by.id),
+            transfer_id=str(transfer.id),
+            before_status=BranchTransfer.IN_TRANSIT,
+            after_status=transfer.status,
+        )
+    )
     logger.info(
         "Transfer %s received by user %s with status %s",
         transfer.pk,
         performed_by,
         new_status,
     )
+
+
+# ---------------------------------------------------------------------------
+# Internal lot helpers
+# ---------------------------------------------------------------------------
+
+def _apply_receive_lot_allocations(
+    *, transfer, line, recipient_item, ledger, quantity_received,
+    lot_override=False, lot_override_reason=""
+):
+    """
+    At receive time, look up the dispatch lot allocations and create
+    matching destination lot balances.
+
+    If a destination lot with the same lot_code exists but has conflicting
+    expiry_date / manufacture_date, raises ValidationError unless lot_override=True.
+    """
+    dispatch_allocs = list(
+        BranchTransferLineDispatchLotAllocation.objects.filter(
+            transfer_line=line
+        ).select_related("lot")
+    )
+
+    if not dispatch_allocs:
+        logger.warning(
+            "Lot-tracked item %s on transfer line %s has no dispatch lot allocations.",
+            line.item_id,
+            line.pk,
+        )
+        return
+
+    # Scale allocations to quantity_received (partial receives possible)
+    total_dispatched = sum(a.quantity for a in dispatch_allocs)
+    ratio = quantity_received / total_dispatched if total_dispatched else Decimal("1")
+
+    for dispatch_alloc in dispatch_allocs:
+        source_lot = dispatch_alloc.lot
+        alloc_qty = (dispatch_alloc.quantity * ratio).quantize(Decimal("0.0001"))
+
+        if alloc_qty <= 0:
+            continue
+
+        # Try to find an existing lot at destination with same lot_code
+        existing_lot = InventoryLotBalance.objects.filter(
+            organization=transfer.to_organization,
+            branch=transfer.to_branch,
+            org_item=recipient_item,
+            lot_code=source_lot.lot_code,
+        ).first()
+
+        if existing_lot is not None:
+            # Check for conflicting metadata
+            conflict = (
+                existing_lot.expiry_date != source_lot.expiry_date
+                or existing_lot.manufacture_date != source_lot.manufacture_date
+            )
+            if conflict and not lot_override:
+                raise ValidationError(
+                    f"Lot '{source_lot.lot_code}' already exists at destination branch with "
+                    f"conflicting expiry/manufacture dates. "
+                    "Provide lot_override=True with a reason to proceed."
+                )
+            if conflict:
+                logger.warning(
+                    "Lot override applied for lot '%s' on transfer %s: %s",
+                    source_lot.lot_code,
+                    transfer.pk,
+                    lot_override_reason,
+                )
+            dest_lot = existing_lot
+        else:
+            dest_lot, _ = get_or_create_lot(
+                org=transfer.to_organization,
+                branch=transfer.to_branch,
+                org_item=recipient_item,
+                lot_code=source_lot.lot_code,
+                expiry_date=source_lot.expiry_date,
+                manufacture_date=source_lot.manufacture_date,
+            )
+
+        increment_lot_balance(dest_lot, alloc_qty)
+
+        BranchTransferLineReceiveLotAllocation.objects.create(
+            transfer_line=line,
+            lot=dest_lot,
+            quantity=alloc_qty,
+        )
+        StockMovementLotAllocation.objects.create(
+            ledger=ledger,
+            lot=dest_lot,
+            quantity=alloc_qty,
+        )

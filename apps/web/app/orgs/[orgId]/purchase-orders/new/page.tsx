@@ -200,6 +200,7 @@ export default function NewPurchaseOrderPage() {
 
       <POLineAddForm
         orgId={orgId}
+        supplierId={supplier}
         existingItemIds={pendingLines.map((line) => line.itemId)}
         onAddLine={addPendingLine}
         disabled={isLocked}

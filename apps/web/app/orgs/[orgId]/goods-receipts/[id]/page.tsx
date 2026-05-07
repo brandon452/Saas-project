@@ -17,12 +17,11 @@ import {
 } from "@/components/ui/table"
 import { useGRBranches } from "@/lib/hooks/goods-receipts/useGRBranches"
 import { useGoodsReceipt } from "@/lib/hooks/goods-receipts/useGoodsReceipt"
-import { useGRSuppliers } from "@/lib/hooks/goods-receipts/useGRSuppliers"
 import { useOrg } from "@/lib/hooks/useOrg"
 
-function truncateUuid(value: string | null | undefined) {
-  if (!value) return "—"
-  return `${value.slice(0, 8)}...`
+function truncateUuid(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return "—"
+  return `${String(value).slice(0, 8)}...`
 }
 
 export default function GoodsReceiptDetailPage() {
@@ -32,10 +31,8 @@ export default function GoodsReceiptDetailPage() {
 
   const receiptQuery = useGoodsReceipt(orgId, receiptId)
   const branchesQuery = useGRBranches(orgId)
-  const suppliersQuery = useGRSuppliers(orgId)
 
   const branchMap = new Map((branchesQuery.data ?? []).map((item) => [item.id, item.name]))
-  const supplierMap = new Map((suppliersQuery.data ?? []).map((item) => [String(item.id), item.display_name]))
   const errorMessage = receiptQuery.error instanceof Error ? receiptQuery.error.message : ""
 
   if (receiptQuery.isLoading) {
@@ -115,7 +112,7 @@ export default function GoodsReceiptDetailPage() {
         <CardContent className="grid gap-3 text-sm text-muted-foreground md:grid-cols-2">
           <p>Date: {new Date(receipt.received_at).toLocaleString()}</p>
           <p>Branch: {branchMap.get(receipt.branch) ?? "—"}</p>
-          <p>Supplier: {receipt.supplier ? (supplierMap.get(receipt.supplier) ?? "—") : "—"}</p>
+          <p>Supplier: {receipt.supplier_display ?? "—"}</p>
           {receipt.receipt_type === "DIRECT_RECEIPT" ? (
             <p>Source reference: {receipt.source_reference.trim() || "—"}</p>
           ) : (
@@ -145,8 +142,8 @@ export default function GoodsReceiptDetailPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                {receipt.receipt_type === "PO_RECEIPT" ? <TableHead>PO Line</TableHead> : null}
                 <TableHead>Item</TableHead>
+                <TableHead>SKU</TableHead>
                 <TableHead>Qty Received</TableHead>
                 <TableHead>Unit Cost</TableHead>
               </TableRow>
@@ -154,10 +151,8 @@ export default function GoodsReceiptDetailPage() {
             <TableBody>
               {receipt.lines.map((line) => (
                 <TableRow key={line.id}>
-                  {receipt.receipt_type === "PO_RECEIPT" ? (
-                    <TableCell className="font-mono text-sm">{truncateUuid(line.po_line)}</TableCell>
-                  ) : null}
                   <TableCell>{line.item?.name ?? "—"}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{line.item?.sku ?? "—"}</TableCell>
                   <TableCell>{line.quantity_received}</TableCell>
                   <TableCell>{line.unit_cost ?? "—"}</TableCell>
                 </TableRow>

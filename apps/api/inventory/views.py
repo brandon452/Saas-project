@@ -1,9 +1,10 @@
 from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
-from django.db.models import BooleanField, Case, Count, F, IntegerField, OuterRef, Q, Subquery, Value, When
+from django.db.models import BooleanField, Case, CharField, Count, F, IntegerField, OuterRef, Prefetch, Q, Subquery, Value, When
 from django_ratelimit.core import is_ratelimited
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework.decorators import action
@@ -20,6 +21,7 @@ from audit.services import log_audit_event
 from tenancy.mixins import BranchScopedMixin, OrgScopedViewSetMixin
 from tenancy.models import Organization
 from tenancy.permissions import (
+    IsOrgMemberOrParent,
     IsOrgOperationalUser,
     IsOrgOwnerOrAdmin,
     IsOrgOwnerOrAdminOrParentAdmin,
@@ -30,12 +32,15 @@ from tenancy.permissions import (
     get_parent_membership,
 )
 
+from suppliers.models import SupplierItem
 from .models import (
-    BranchItem, InventoryClosePeriod,
+    BranchItem, InventoryClosePeriod, InventoryLotBalance,
     MasterItem, OrgItem, StockLedger, StockOnHand, StockTake, StockTakeLine,
+    StockTakeLineLotAllocation,
 )
 from .serializers import (
     BranchItemBulkActivateSerializer,
+    OrgItemBulkActivateSerializer,
     InventoryCloseSnapshotSerializer,
     InventoryClosePeriodSerializer,
     InventoryClosePeriodCreateSerializer,
@@ -52,16 +57,20 @@ from .serializers import (
     StockOnHandSerializer,
     StockTakeCreateSerializer,
     StockTakeDetailSerializer,
+    StockTakeGenerateCycleSerializer,
     StockTakeLineBulkUpdateSerializer,
     StockTakeLineSerializer,
     StockTakeLineUpdateSerializer,
     StockTakeListSerializer,
     StockTakeNotesUpdateSerializer,
 )
+from .api import resolve_scan
 from .services import (
     approve_stock_take,
     cancel_stock_take,
     close_period,
+    generate_cycle_count,
+    get_org_local_today,
     record_stock_movement,
     reopen_period,
     reopen_stock_take,
@@ -125,7 +134,39 @@ class OrgItemViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedMixin, 
                 branch_items__is_active=True,
             )
 
-        return qs
+        qs = qs.prefetch_related(
+            Prefetch(
+                "supplier_items",
+                queryset=SupplierItem.objects.filter(is_active=True).select_related("supplier"),
+                to_attr="active_supplier_items",
+            )
+        )
+
+        has_preferred = self.request.query_params.get("has_preferred_supplier")
+        if has_preferred is not None:
+            if has_preferred.lower() == "false":
+                qs = qs.exclude(
+                    supplier_items__is_preferred=True,
+                    supplier_items__is_active=True,
+                )
+            elif has_preferred.lower() == "true":
+                qs = qs.filter(
+                    supplier_items__is_preferred=True,
+                    supplier_items__is_active=True,
+                )
+
+        supplier_id = self.request.query_params.get("supplier")
+        if supplier_id:
+            try:
+                supplier_id = int(supplier_id)
+            except (TypeError, ValueError):
+                raise DRFValidationError({"supplier": ["Enter a valid integer."]})
+            qs = qs.filter(
+                supplier_items__supplier_id=supplier_id,
+                supplier_items__is_active=True,
+            )
+
+        return qs.distinct()
 
     def perform_create(self, serializer):
         serializer.save(organization=self.request.org, is_active=True)
@@ -143,6 +184,17 @@ class OrgItemViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedMixin, 
     def perform_destroy(self, instance):
         instance.is_active = False
         instance.save(update_fields=["is_active"])
+
+    @action(detail=True, methods=["get"], url_path="suppliers")
+    def list_suppliers(self, request, *args, **kwargs):
+        from suppliers.models import SupplierItem
+        from suppliers.serializers import SupplierItemSerializer
+        org_item = self.get_object()
+        qs = SupplierItem.objects.filter(
+            org_item=org_item, is_active=True
+        ).select_related("supplier", "org_item__master_item")
+        serializer = SupplierItemSerializer(qs, many=True, context={"request": request})
+        return Response(serializer.data)
 
 
 class MasterItemViewSet(viewsets.ModelViewSet):
@@ -174,7 +226,7 @@ class MasterItemViewSet(viewsets.ModelViewSet):
 
 
 class OrgMasterItemView(APIView):
-    permission_classes = [IsAuthenticated, IsOrgOwnerOrAdmin]
+    permission_classes = [IsAuthenticated, IsOrgOwnerOrAdminOrParentAdmin]
 
     def initial(self, request, *args, **kwargs):
         org_id = self.kwargs.get("org_id")
@@ -199,8 +251,99 @@ class OrgMasterItemView(APIView):
             id__in=activated_master_ids,
         ).order_by("name")
 
-        serializer = OrgMasterItemSerializer(available, many=True)
-        return Response(serializer.data)
+        search = request.query_params.get("search", "").strip()
+        if search:
+            available = available.filter(
+                Q(name__icontains=search) | Q(sku__icontains=search)
+            )
+
+        paginator = PageNumberPagination()
+        paginator.page_size = 100
+        page = paginator.paginate_queryset(available, request, view=self)
+        serializer = OrgMasterItemSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+
+class OrgItemBulkActivateView(APIView):
+    permission_classes = [IsAuthenticated, IsOrgOwnerOrAdminOrParentAdmin]
+
+    def initial(self, request, *args, **kwargs):
+        org_id = self.kwargs.get("org_id")
+        try:
+            request.org = Organization.objects.get(pk=org_id, is_active=True)
+        except Organization.DoesNotExist:
+            raise NotFound("Organization not found.")
+
+        parent_membership = get_parent_membership(request)
+        request.parent_role = parent_membership.role if parent_membership else None
+        super().initial(request, *args, **kwargs)
+
+    @transaction.atomic
+    def post(self, request, org_id=None, *args, **kwargs):
+        serializer = OrgItemBulkActivateSerializer(
+            data=request.data, context={"request": request}
+        )
+        serializer.is_valid(raise_exception=True)
+
+        master_items = serializer.validated_data["master_items"]
+        total = len(master_items)
+
+        existing = {
+            oi.master_item_id: oi
+            for oi in OrgItem.all_objects.filter(
+                organization=request.org,
+                master_item__in=master_items,
+            )
+        }
+
+        to_create = []
+        to_reactivate_ids = []
+        already_active = 0
+
+        for master_item in master_items:
+            oi = existing.get(master_item.id)
+            if oi is None:
+                to_create.append(OrgItem(
+                    organization=request.org,
+                    master_item=master_item,
+                    name="",
+                    is_active=True,
+                ))
+            elif oi.is_active:
+                already_active += 1
+            else:
+                to_reactivate_ids.append(oi.id)
+
+        if to_create:
+            OrgItem.objects.bulk_create(to_create)
+
+        if to_reactivate_ids:
+            OrgItem.all_objects.filter(id__in=to_reactivate_ids).update(is_active=True)
+
+        activated = len(to_create) + len(to_reactivate_ids)
+
+        log_audit_event(
+            organization=request.org,
+            actor_user=request.user,
+            event_type="org_item.bulk_activated",
+            resource_type="org_item",
+            resource_id=request.org.id,
+            summary=f"Bulk activated {activated} item(s) for organisation {request.org.name}",
+            metadata_json={
+                "activated": activated,
+                "already_active": already_active,
+                "total": total,
+            },
+        )
+
+        return Response(
+            {
+                "activated": activated,
+                "already_active": already_active,
+                "total": total,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class BranchItemCatalogView(APIView):
@@ -229,27 +372,15 @@ class BranchItemCatalogView(APIView):
                 {"branch": "Branch not found or does not belong to this organisation."}
             )
 
-        branch_item_subquery = BranchItem.objects.filter(
-            org_item=OuterRef("pk"),
-            branch=branch,
-            is_active=True,
-        ).values("id")[:1]
-
         queryset = (
             OrgItem.objects.for_org(request.org)
             .filter(is_active=True)
             .select_related("master_item")
-            .annotate(
-                branch_item_id=Subquery(
-                    branch_item_subquery,
-                    output_field=IntegerField(),
-                )
-            )
-            .annotate(
-                is_enabled=Case(
-                    When(branch_item_id__isnull=False, then=Value(True)),
-                    default=Value(False),
-                    output_field=BooleanField(),
+            .prefetch_related(
+                Prefetch(
+                    "branch_items",
+                    queryset=BranchItem.objects.filter(branch=branch, is_active=True),
+                    to_attr="active_branch_items",
                 )
             )
             .order_by("master_item__name")
@@ -323,6 +454,21 @@ class BranchItemBulkActivateView(APIView):
 
         activated = len(to_create) + len(to_reactivate_ids)
 
+        log_audit_event(
+            organization=request.org,
+            actor_user=request.user,
+            event_type="branch_item.bulk_activated",
+            resource_type="branch_item",
+            resource_id=branch.id,
+            summary=f"Bulk activated {activated} item(s) at branch {branch.name}",
+            metadata_json={
+                "branch_id": str(branch.id),
+                "activated": activated,
+                "already_active": already_active,
+                "total": len(org_items),
+            },
+        )
+
         return Response(
             {
                 "activated": activated,
@@ -354,19 +500,36 @@ class BranchItemBulkDeactivateView(APIView):
         )
         serializer.is_valid(raise_exception=True)
 
+        # branch_items contains only active items (serializer pre-filtered)
         branch_items = serializer.validated_data["branch_items"]
-
-        active_ids = [bi.id for bi in branch_items if bi.is_active]
-        already_inactive = len(branch_items) - len(active_ids)
+        active_ids = [bi.id for bi in branch_items]
+        total_submitted = serializer._unique_ids_count
+        already_inactive = total_submitted - len(active_ids)
 
         if active_ids:
             BranchItem.objects.filter(id__in=active_ids).update(is_active=False)
+
+        branch = serializer.validated_data["branch"]
+        log_audit_event(
+            organization=request.org,
+            actor_user=request.user,
+            event_type="branch_item.bulk_deactivated",
+            resource_type="branch_item",
+            resource_id=branch.id,
+            summary=f"Bulk deactivated {len(active_ids)} item(s) at branch {branch.name}",
+            metadata_json={
+                "branch_id": str(branch.id),
+                "deactivated": len(active_ids),
+                "already_inactive": already_inactive,
+                "total": total_submitted,
+            },
+        )
 
         return Response(
             {
                 "deactivated": len(active_ids),
                 "already_inactive": already_inactive,
-                "total": len(branch_items),
+                "total": total_submitted,
             },
             status=status.HTTP_200_OK,
         )
@@ -408,13 +571,33 @@ class BranchItemViewSet(RolePolicyMixin, OrgScopedViewSetMixin, viewsets.ModelVi
             qs = qs.filter(is_active=is_active.lower() == "true")
         return qs
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        instance = serializer.save()
+
+        org_item = serializer.validated_data["org_item"]
+        branch = serializer.validated_data["branch"]
+
+        # Row lock prevents concurrent requests from racing past the is_active check
+        # (PostgreSQL: row-level; SQLite tests: table-level — both provide the guarantee)
+        existing = BranchItem.objects.select_for_update().filter(
+            org_item=org_item, branch=branch
+        ).first()
+
+        if existing and existing.is_active:
+            raise DRFValidationError({"org_item": ["This item is already enabled at this branch."]})
+
+        if existing:
+            existing.is_active = True
+            existing.save(update_fields=["is_active"])
+            instance = existing
+            status_code = status.HTTP_200_OK
+        else:
+            instance = BranchItem.objects.create(org_item=org_item, branch=branch, is_active=True)
+            status_code = status.HTTP_201_CREATED
+
         out = BranchItemSerializer(instance, context=self.get_serializer_context())
-        was_reactivated = getattr(serializer, "_existing_inactive", None) is not None
-        status_code = status.HTTP_200_OK if was_reactivated else status.HTTP_201_CREATED
         return Response(out.data, status=status_code)
 
     def perform_destroy(self, instance):
@@ -624,6 +807,18 @@ class StockTakeViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedMixin
             validate_uuid_query_param(branch_id, "branch")
             queryset = queryset.filter(branch_id=branch_id)
 
+        status_param = self.request.query_params.get("status")
+        if status_param:
+            queryset = queryset.filter(status=status_param)
+
+        stock_take_type = self.request.query_params.get("stock_take_type")
+        if stock_take_type:
+            queryset = queryset.filter(stock_take_type=stock_take_type)
+
+        cycle_item_class = self.request.query_params.get("cycle_item_class")
+        if cycle_item_class:
+            queryset = queryset.filter(cycle_item_class=cycle_item_class)
+
         if self.action == "retrieve":
             queryset = queryset.prefetch_related("lines__org_item__master_item")
         return queryset
@@ -702,6 +897,54 @@ class StockTakeViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedMixin
     def cancel(self, request, *args, **kwargs):
         return self._run_transition(request, cancel_stock_take)
 
+    @action(detail=False, methods=["post"], url_path="generate-cycle")
+    def generate_cycle(self, request, *args, **kwargs):
+        serializer = StockTakeGenerateCycleSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        branch = serializer.validated_data["branch_id"]
+        cycle_item_class = serializer.validated_data["cycle_item_class"]
+        scheduled_for = serializer.validated_data.get("scheduled_for") or get_org_local_today(request.org)
+
+        try:
+            stock_take, created, generated_line_count = generate_cycle_count(
+                org=request.org,
+                branch=branch,
+                cycle_item_class=cycle_item_class,
+                scheduled_for=scheduled_for,
+                performed_by=request.user,
+            )
+        except DjangoValidationError as exc:
+            raise DRFValidationError({"detail": exc.messages})
+
+        if created:
+            log_audit_event(
+                organization=request.org,
+                actor_user=request.user,
+                event_type="stock_take.cycle_generated",
+                resource_type="stock_take",
+                resource_id=stock_take.id,
+                summary=f"cycle generated {stock_take.id}",
+                metadata_json={
+                    "stock_take_id": str(stock_take.id),
+                    "branch_id": str(stock_take.branch_id),
+                    "cycle_item_class": stock_take.cycle_item_class,
+                    "scheduled_for": str(stock_take.scheduled_for),
+                    "created": True,
+                    "generated_line_count": generated_line_count,
+                },
+                diff_json=None,
+            )
+
+        response_data = StockTakeDetailSerializer(stock_take, context={"request": request}).data
+        response_data["created"] = created
+        response_data["generated_line_count"] = generated_line_count
+        response_status = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        return Response(response_data, status=response_status)
+
     @action(detail=True, methods=["get"], url_path="lines")
     def lines(self, request, *args, **kwargs):
         stock_take = self.get_object()
@@ -769,6 +1012,104 @@ class StockTakeViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedMixin
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(StockTakeLineSerializer(line, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], url_path="submit-lot-allocations")
+    @transaction.atomic
+    def submit_lot_allocations(self, request, *args, **kwargs):
+        """
+        Submit (replace) lot allocations for a single stock-take line.
+
+        Only allowed when the stock take is in PENDING_APPROVAL status.
+
+        Expected payload:
+        {
+            "line_id": <int>,
+            "direction": "INCREASE" | "DECREASE",
+            "allocations": [
+                {"lot_id": <optional int>, "lot_code": "...", "expiry_date": "...", "quantity": "..."},
+                ...
+            ]
+        }
+        """
+        from django.utils import timezone as tz
+
+        stock_take = self.get_object()
+        if stock_take.status != StockTake.PENDING_APPROVAL:
+            raise DRFValidationError(
+                {"detail": "Lot allocations can only be submitted while the stock take is Pending Approval."}
+            )
+
+        line_id = request.data.get("line_id")
+        direction = request.data.get("direction")
+        allocations = request.data.get("allocations", [])
+
+        if not line_id:
+            raise DRFValidationError({"line_id": ["This field is required."]})
+        if direction not in (StockTakeLineLotAllocation.INCREASE, StockTakeLineLotAllocation.DECREASE):
+            raise DRFValidationError({"direction": ["Must be INCREASE or DECREASE."]})
+        if not allocations:
+            raise DRFValidationError({"allocations": ["At least one allocation is required."]})
+
+        try:
+            line = stock_take.lines.get(pk=line_id)
+        except StockTakeLine.DoesNotExist:
+            raise NotFound("Stock take line not found.")
+
+        # Validate allocations payload
+        total_qty = Decimal("0")
+        parsed_allocs = []
+        for alloc in allocations:
+            try:
+                qty = Decimal(str(alloc.get("quantity", "0")))
+            except Exception:
+                raise DRFValidationError({"allocations": ["Invalid quantity value."]})
+            if qty <= 0:
+                raise DRFValidationError({"allocations": ["Each allocation quantity must be positive."]})
+
+            lot_id = alloc.get("lot_id")
+            lot_code = alloc.get("lot_code", "")
+            expiry_date = alloc.get("expiry_date")
+            manufacture_date = alloc.get("manufacture_date")
+
+            resolved_lot = None
+            if lot_id:
+                try:
+                    resolved_lot = InventoryLotBalance.objects.get(
+                        pk=lot_id,
+                        organization=request.org,
+                    )
+                except InventoryLotBalance.DoesNotExist:
+                    raise DRFValidationError({"allocations": [f"Lot {lot_id} not found."]})
+
+            total_qty += qty
+            parsed_allocs.append({
+                "lot": resolved_lot,
+                "lot_code": lot_code,
+                "expiry_date": expiry_date,
+                "manufacture_date": manufacture_date,
+                "quantity": qty,
+            })
+
+        # Replace existing allocations for this line
+        StockTakeLineLotAllocation.objects.filter(stock_take_line=line).delete()
+        now = tz.now()
+        for pa in parsed_allocs:
+            StockTakeLineLotAllocation.objects.create(
+                stock_take_line=line,
+                direction=direction,
+                quantity=pa["quantity"],
+                lot=pa["lot"],
+                lot_code=pa["lot_code"],
+                expiry_date=pa["expiry_date"],
+                manufacture_date=pa["manufacture_date"],
+                submitted_by=request.user,
+                submitted_at=now,
+            )
+
+        return Response(
+            {"detail": f"{len(parsed_allocs)} lot allocation(s) saved for line {line_id}."},
+            status=status.HTTP_200_OK,
+        )
 
 
 class ClosePeriodViewSet(OrgScopedViewSetMixin, viewsets.GenericViewSet):
@@ -862,3 +1203,46 @@ class ClosePeriodViewSet(OrgScopedViewSetMixin, viewsets.GenericViewSet):
         period = self.get_object()
         qs = period.snapshots.select_related("branch", "item__master_item").all()
         return Response(InventoryCloseSnapshotSerializer(qs, many=True).data)
+
+
+class ScanResolveView(APIView):
+    """
+    GET /api/orgs/{org_id}/inventory/items/resolve-scan/
+        ?code=...&branch_id=...&stock_take_id=...
+
+    Resolves a scanned code to an inventory item within org+branch scope.
+    branch_id is required; stock_take_id is optional (enables not_in_count outcome).
+
+    Outcomes: matched | not_found | not_enabled_at_branch | not_in_count | ambiguous
+    """
+
+    permission_classes = [IsAuthenticated, IsOrgMemberOrParent]
+
+    def initial(self, request, *args, **kwargs):
+        org_id = self.kwargs.get("org_id")
+        try:
+            request.org = Organization.objects.get(pk=org_id, is_active=True)
+        except Organization.DoesNotExist:
+            raise NotFound("Organization not found.")
+        parent_membership = get_parent_membership(request)
+        request.parent_role = parent_membership.role if parent_membership else None
+        super().initial(request, *args, **kwargs)
+
+    def get(self, request, org_id=None):
+        branch_id = request.query_params.get("branch_id", "").strip()
+        if not branch_id:
+            return Response(
+                {"code": "branch_required", "detail": "branch_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        code = request.query_params.get("code", "").strip()
+        stock_take_id = request.query_params.get("stock_take_id") or None
+
+        result = resolve_scan(
+            org=request.org,
+            code=code,
+            branch_id=branch_id,
+            stock_take_id=stock_take_id,
+        )
+        return Response(result, status=status.HTTP_200_OK)

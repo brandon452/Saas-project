@@ -19,6 +19,7 @@ import {
 import { useGRBranches } from "@/lib/hooks/goods-receipts/useGRBranches"
 import { useGoodsReceipts } from "@/lib/hooks/goods-receipts/useGoodsReceipts"
 import { useGRSuppliers } from "@/lib/hooks/goods-receipts/useGRSuppliers"
+import { useExportCsv } from "@/lib/hooks/useExportCsv"
 import { useOrg } from "@/lib/hooks/useOrg"
 
 export default function GoodsReceiptsPage() {
@@ -30,9 +31,9 @@ export default function GoodsReceiptsPage() {
   const receiptType = searchParams.get("receipt_type") ?? ""
   const branch = searchParams.get("branch") ?? ""
   const supplier = searchParams.get("supplier") ?? ""
-  const dateAfter = searchParams.get("date_after") ?? ""
   const dateBefore = searchParams.get("date_before") ?? ""
   const page = searchParams.get("page") ?? "1"
+  const dateAfter = searchParams.get("date_after") ?? ""
 
   const hasInvalidDateRange = !!dateAfter && !!dateBefore && dateAfter > dateBefore
 
@@ -47,6 +48,18 @@ export default function GoodsReceiptsPage() {
   })
   const branchesQuery = useGRBranches(orgId)
   const suppliersQuery = useGRSuppliers(orgId)
+
+  const { exportStatus, exportError, triggerExport } = useExportCsv()
+
+  function handleExport() {
+    const params = new URLSearchParams()
+    if (receiptType) params.set("receipt_type", receiptType)
+    if (branch) params.set("branch", branch)
+    if (supplier) params.set("supplier", supplier)
+    if (dateAfter) params.set("date_after", dateAfter)
+    if (dateBefore) params.set("date_before", dateBefore)
+    void triggerExport(`orgs/${orgId}/goods-receipts/export/csv/`, params)
+  }
 
   const branchMap = new Map((branchesQuery.data ?? []).map((item) => [item.id, item.name]))
   const supplierMap = new Map((suppliersQuery.data ?? []).map((item) => [String(item.id), item.display_name]))
@@ -104,15 +117,28 @@ export default function GoodsReceiptsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Goods Receipts</h1>
           <p className="text-sm text-muted-foreground">Track received stock for this organisation.</p>
         </div>
-        {canAccess(["OWNER", "ADMIN", "STAFF"]) ? (
-          <Link
-            href={`/orgs/${orgId}/goods-receipts/new`}
-            className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={exportStatus === "loading"}
+            onClick={handleExport}
           >
-            New Goods Receipt
-          </Link>
-        ) : null}
+            {exportStatus === "loading" ? "Exporting…" : exportStatus === "success" ? "Exported!" : "Export CSV"}
+          </Button>
+          {canAccess(["OWNER", "ADMIN", "STAFF"]) ? (
+            <Link
+              href={`/orgs/${orgId}/goods-receipts/new`}
+              className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+            >
+              New Goods Receipt
+            </Link>
+          ) : null}
+        </div>
       </div>
+      {exportStatus === "error" && exportError
+        ? <p className="text-sm text-destructive">{exportError}</p>
+        : null}
 
       <GoodsReceiptFilters
         branches={branchesQuery.data ?? []}
@@ -149,7 +175,7 @@ export default function GoodsReceiptsPage() {
                       <GoodsReceiptTypeBadge type={receipt.receipt_type} />
                     </TableCell>
                     <TableCell>{branchMap.get(receipt.branch) ?? "—"}</TableCell>
-                    <TableCell>{receipt.supplier ? (supplierMap.get(receipt.supplier) ?? "—") : "—"}</TableCell>
+                    <TableCell>{receipt.supplier_display ?? "—"}</TableCell>
                     <TableCell>{receipt.source_reference.trim() || "—"}</TableCell>
                     <TableCell>{receipt.lines.length}</TableCell>
                   </TableRow>

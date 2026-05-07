@@ -3,7 +3,9 @@
 import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
+import { ScanLine } from "lucide-react"
 
+import { ReceiveScanMode } from "@/components/scan-modes/ReceiveScanMode"
 import { DirectReceiptLineTable, type DirectReceiptLine } from "@/components/goods-receipts/DirectReceiptLineTable"
 import { POReceiptLineTable, type POReceiptLineRow } from "@/components/goods-receipts/POReceiptLineTable"
 import { POStatusBadge } from "@/components/purchase-orders/POStatusBadge"
@@ -17,6 +19,7 @@ import { useGRBranches } from "@/lib/hooks/goods-receipts/useGRBranches"
 import { useCreateGoodsReceipt } from "@/lib/hooks/goods-receipts/useGoodsReceiptMutations"
 import { useGRPOSearch, type GRPOSearchResult } from "@/lib/hooks/goods-receipts/useGRPOSearch"
 import { useGRSuppliers } from "@/lib/hooks/goods-receipts/useGRSuppliers"
+import { usePOMutations } from "@/lib/hooks/purchase-orders/usePOMutations"
 import { useAuth } from "@/lib/hooks/useAuth"
 import { useOrg } from "@/lib/hooks/useOrg"
 import type { ReceiptType } from "@/lib/types/goods-receipts"
@@ -28,6 +31,7 @@ export default function NewGoodsReceiptPage() {
   const branchesQuery = useGRBranches(orgId)
   const suppliersQuery = useGRSuppliers(orgId)
   const createReceipt = useCreateGoodsReceipt(orgId)
+  const { reconcileStatus } = usePOMutations(orgId)
 
   const [receiptType, setReceiptType] = useState<ReceiptType>("PO_RECEIPT")
   const [notes, setNotes] = useState("")
@@ -43,6 +47,7 @@ export default function NewGoodsReceiptPage() {
   const [directLines, setDirectLines] = useState<DirectReceiptLine[]>([])
 
   const [submitError, setSubmitError] = useState("")
+  const [directScanMode, setDirectScanMode] = useState(false)
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedPOQuery(poQuery.trim()), 300)
@@ -283,7 +288,7 @@ export default function NewGoodsReceiptPage() {
                         <POStatusBadge status={po.status as never} />
                       </div>
                       <div className="text-sm text-muted-foreground">
-                        Supplier: {supplierMap.get(po.supplier) ?? "—"} | Branch: {branchMap.get(po.branch) ?? "—"}
+                        Supplier: {supplierMap.get(String(po.supplier)) ?? "—"} | Branch: {branchMap.get(po.branch) ?? "—"}
                       </div>
                     </button>
                   ))
@@ -299,7 +304,26 @@ export default function NewGoodsReceiptPage() {
               </div>
             ) : null}
 
-            <POReceiptLineTable lines={poLines} onChange={setPOLines} />
+            {selectedPO ? (
+              allPOLinesReceived ? (
+                <div className="rounded-lg border border-dashed border-border p-4 space-y-3">
+                  <p className="text-sm text-muted-foreground">All lines on this PO have been fully received.</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={reconcileStatus.isPending}
+                    onClick={() => void reconcileStatus.mutateAsync(selectedPO.id).then(() => router.push(`/orgs/${orgId}/purchase-orders/${selectedPO.id}`))}
+                  >
+                    {reconcileStatus.isPending ? "Updating…" : "Mark PO as Fully Received"}
+                  </Button>
+                  {reconcileStatus.isError ? (
+                    <p className="text-sm text-destructive">Failed to update status. Please try again.</p>
+                  ) : null}
+                </div>
+              ) : (
+                <POReceiptLineTable lines={poLines} onChange={setPOLines} />
+              )
+            ) : null}
           </CardContent>
         </Card>
       ) : (
@@ -357,7 +381,40 @@ export default function NewGoodsReceiptPage() {
               />
             </div>
 
-            <DirectReceiptLineTable orgId={orgId} lines={directLines} onChange={setDirectLines} />
+            {directBranch && (
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant={directScanMode ? "ghost" : "outline"}
+                  size="sm"
+                  onClick={() => setDirectScanMode((v) => !v)}
+                  disabled={isPending}
+                >
+                  <ScanLine className="mr-2 h-4 w-4" />
+                  {directScanMode ? "Manual Mode" : "Scan Mode"}
+                </Button>
+              </div>
+            )}
+
+            {directScanMode && directBranch ? (
+              <ReceiveScanMode
+                orgId={orgId}
+                branchId={directBranch}
+                isPending={isPending}
+                onSubmitLines={async (scanLines) => {
+                  await createReceipt.mutateAsync({
+                    receipt_type: "DIRECT_RECEIPT",
+                    branch: directBranch,
+                    supplier: directSupplier || null,
+                    source_reference: sourceReference,
+                    notes,
+                    lines: scanLines,
+                  })
+                }}
+              />
+            ) : (
+              <DirectReceiptLineTable orgId={orgId} lines={directLines} onChange={setDirectLines} />
+            )}
           </CardContent>
         </Card>
       )}

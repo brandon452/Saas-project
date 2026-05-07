@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Purchase Order {{ po.po_number }}</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 15mm;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 10pt;
+      color: #1a1a1a;
+      line-height: 1.4;
+    }
+
+    /* ── Header ── */
+    .doc-header {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      align-items: start;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #2563eb;
+    }
+
+    .org-name {
+      font-size: 16pt;
+      font-weight: bold;
+      color: #1e3a8a;
+    }
+
+    .doc-title-block {
+      text-align: right;
+    }
+
+    .doc-title {
+      font-size: 18pt;
+      font-weight: bold;
+      color: #1e3a8a;
+      letter-spacing: 1px;
+    }
+
+    .doc-meta {
+      margin-top: 4px;
+      font-size: 9pt;
+      color: #555;
+    }
+
+    .doc-meta strong {
+      color: #1a1a1a;
+    }
+
+    .status-badge {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 2px 8px;
+      font-size: 8pt;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+      background: #e0e7ff;
+      color: #1e3a8a;
+      border-radius: 3px;
+    }
+
+    /* ── Info blocks ── */
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .info-block {
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      padding: 10px 12px;
+    }
+
+    .info-block-title {
+      font-size: 7pt;
+      font-weight: bold;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #6b7280;
+      margin-bottom: 6px;
+    }
+
+    .info-block p {
+      font-size: 9.5pt;
+      margin-bottom: 2px;
+      color: #1a1a1a;
+    }
+
+    .info-block .supplier-name {
+      font-size: 10.5pt;
+      font-weight: bold;
+    }
+
+    /* ── Line items table ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 0;
+    }
+
+    thead {
+      background: #1e3a8a;
+      color: white;
+    }
+
+    thead th {
+      padding: 7px 8px;
+      font-size: 8.5pt;
+      font-weight: bold;
+      text-align: left;
+    }
+
+    thead th.num {
+      text-align: right;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #f9fafb;
+    }
+
+    tbody td {
+      padding: 6px 8px;
+      font-size: 9.5pt;
+    }
+
+    tbody td.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    tbody td.muted {
+      color: #6b7280;
+      font-size: 8.5pt;
+    }
+
+    .totals-row {
+      border-top: 2px solid #1e3a8a;
+    }
+
+    .totals-row td {
+      padding: 8px 8px;
+      font-weight: bold;
+      font-size: 10pt;
+    }
+
+    /* ── Notes ── */
+    #notes-section {
+      margin-top: 20px;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      padding: 10px 12px;
+    }
+
+    #notes-section h3 {
+      font-size: 7pt;
+      font-weight: bold;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #6b7280;
+      margin-bottom: 6px;
+    }
+
+    #notes-section p {
+      font-size: 9.5pt;
+      color: #1a1a1a;
+      white-space: pre-line;
+    }
+
+    /* ── Footer ── */
+    .doc-footer {
+      margin-top: 24px;
+      padding-top: 8px;
+      border-top: 1px solid #e5e7eb;
+      font-size: 7.5pt;
+      color: #9ca3af;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .doc-footer .right {
+      text-align: right;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="doc-header">
+    <div class="org-name">{{ organization.name }}</div>
+    <div class="doc-title-block">
+      <div class="doc-title">PURCHASE ORDER</div>
+      <div class="doc-meta">
+        <strong>{{ po.po_number }}</strong>
+        &nbsp;·&nbsp;
+        {{ po.created_at|date:"d M Y" }}
+      </div>
+      <div class="status-badge">{{ po.status }}</div>
+    </div>
+  </div>
+
+  <!-- Supplier / Deliver To -->
+  <div class="info-grid">
+    <div class="info-block">
+      <div class="info-block-title">Supplier</div>
+      <p class="supplier-name">{{ po.supplier.display_name }}</p>
+      {% if po.supplier.email %}<p>{{ po.supplier.email }}</p>{% endif %}
+      {% if po.supplier.phone %}<p>{{ po.supplier.phone }}</p>{% endif %}
+      {% if po.supplier.payment_terms_days %}<p>Net {{ po.supplier.payment_terms_days }} days</p>{% endif %}
+    </div>
+    <div class="info-block">
+      <div class="info-block-title">Deliver To</div>
+      <p class="supplier-name">{{ po.branch.name }}</p>
+    </div>
+  </div>
+
+  <!-- Line items -->
+  <table>
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th>SKU</th>
+        <th class="num">Ordered</th>
+        <th class="num">Received</th>
+        <th class="num">Unit Price</th>
+        <th class="num">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines_with_totals %}
+      <tr>
+        <td>{{ line.item_name }}</td>
+        <td class="muted">{{ line.sku }}</td>
+        <td class="num">{{ line.ordered_quantity }}</td>
+        <td class="num">{{ line.received_quantity }}</td>
+        <td class="num">{{ line.unit_price|floatformat:2 }}</td>
+        <td class="num">{{ line.line_total|floatformat:2 }}</td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="6" style="text-align:center; color:#9ca3af; padding:12px;">No line items.</td>
+      </tr>
+      {% endfor %}
+      <tr class="totals-row">
+        <td colspan="4"></td>
+        <td class="num">Grand Total ({{ organization.default_currency }})</td>
+        <td class="num">{{ grand_total|floatformat:2 }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Notes -->
+  {% if po.notes %}
+  <section id="notes-section">
+    <h3>Notes</h3>
+    <p>{{ po.notes }}</p>
+  </section>
+  {% endif %}
+
+  <!-- Footer -->
+  <div class="doc-footer">
+    <div>
+      Generated {{ generated_at|date:"d M Y H:i" }} UTC
+      by
+      {% if po.created_by %}
+        {% with full_name=po.created_by.get_full_name %}
+          {% if full_name %}{{ full_name }}{% elif po.created_by.email %}{{ po.created_by.email }}{% else %}System{% endif %}
+        {% endwith %}
+      {% else %}System{% endif %}
+    </div>
+    <div class="right">This document is not a tax invoice.</div>
+  </div>
+
+</body>
+</html>

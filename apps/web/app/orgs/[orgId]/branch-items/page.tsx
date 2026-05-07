@@ -70,7 +70,7 @@ export default function BranchItemsPage() {
     search: search || undefined,
     page,
   })
-  const { enableBranchItem, disableBranchItem, bulkActivateBranchItems, bulkDeactivateBranchItems } = useBranchItemMutations(orgId, branchId)
+  const { enableBranchItem, disableBranchItem, updateBranchItem, bulkActivateBranchItems, bulkDeactivateBranchItems } = useBranchItemMutations(orgId, branchId)
 
   useEffect(() => {
     setSearchDraft(search)
@@ -102,20 +102,14 @@ export default function BranchItemsPage() {
 
       if (trimmed.length >= 2) {
         if (trimmed !== search) {
-          setSelectedIds(new Set())
-          setBulkError("")
-          setSelectedDeactivateIds(new Set())
-          setBulkDeactivateError("")
+          clearSelections()
           updateParams({ search: trimmed, page: "1" })
         }
         return
       }
 
       if (search) {
-        setSelectedIds(new Set())
-        setBulkError("")
-        setSelectedDeactivateIds(new Set())
-        setBulkDeactivateError("")
+        clearSelections()
         updateParams({ search: null, page: "1" })
       }
     }, 300)
@@ -123,13 +117,20 @@ export default function BranchItemsPage() {
     return () => window.clearTimeout(timer)
   }, [branchId, searchDraft, search, updateParams])
 
+  function clearSelections() {
+    setSelectedIds(new Set())
+    setBulkError("")
+    setSelectedDeactivateIds(new Set())
+    setBulkDeactivateError("")
+  }
+
   const items = useMemo(() => catalogQuery.data?.results ?? [], [catalogQuery.data?.results])
   const count = catalogQuery.data?.count ?? 0
   const disabledItems = items.filter((r) => !r.is_enabled)
   const allDisabledSelected =
     disabledItems.length > 0 && disabledItems.every((r) => selectedIds.has(r.id))
   const columns = useMemo(
-    () => (canEdit ? ["Name", "SKU", "Status", "Actions"] : ["Name", "SKU", "Status"]),
+    () => (canEdit ? ["Name", "SKU", "Class", "Status", "Actions"] : ["Name", "SKU", "Class", "Status"]),
     [canEdit],
   )
   const branches = branchesQuery.data ?? []
@@ -225,10 +226,7 @@ export default function BranchItemsPage() {
               disabled={branchesQuery.isLoading || showBranchError || showBranchPermissionError}
               onChange={(event) => {
                 setError("")
-                setSelectedIds(new Set())
-                setBulkError("")
-                setSelectedDeactivateIds(new Set())
-                setBulkDeactivateError("")
+                clearSelections()
                 updateParams({
                   branch: event.target.value || null,
                   search: null,
@@ -367,7 +365,21 @@ export default function BranchItemsPage() {
                     <TableHeader>
                       <TableRow>
                         {canEdit && branchId ? (
-                          <TableHead className="w-10" />
+                          <TableHead className="w-10">
+                            {disabledItems.length > 0 ? (
+                              <input
+                                type="checkbox"
+                                checked={allDisabledSelected}
+                                onChange={() => {
+                                  if (allDisabledSelected) {
+                                    setSelectedIds(new Set())
+                                  } else {
+                                    setSelectedIds(new Set(disabledItems.map((r) => r.id)))
+                                  }
+                                }}
+                              />
+                            ) : null}
+                          </TableHead>
                         ) : null}
                         {columns.map((column) => (
                           <TableHead key={column}>{column}</TableHead>
@@ -421,6 +433,45 @@ export default function BranchItemsPage() {
                             <TableCell className="font-medium">{row.name}</TableCell>
                             <TableCell className="font-mono">{row.sku}</TableCell>
                             <TableCell>
+                              {canEdit && row.is_enabled && row.branch_item_id !== null ? (
+                                <select
+                                  value={row.item_class ?? ""}
+                                  disabled={isPending || updateBranchItem.isPending}
+                                  onChange={async (event) => {
+                                    try {
+                                      setPendingRowId(row.id)
+                                      setError("")
+                                      await updateBranchItem.mutateAsync({
+                                        branchItemId: row.branch_item_id!,
+                                        payload: {
+                                          item_class: event.target.value
+                                            ? (event.target.value as "A" | "B" | "C")
+                                            : null,
+                                        },
+                                      })
+                                    } catch (err) {
+                                      const message = err instanceof Error ? err.message : ""
+                                      if (message.includes("403")) {
+                                        setError("You do not have permission to update item class.")
+                                      } else {
+                                        setError("Could not update item class.")
+                                      }
+                                    } finally {
+                                      setPendingRowId(null)
+                                    }
+                                  }}
+                                  className="flex h-9 rounded-md border border-input bg-background px-2 text-sm outline-none"
+                                >
+                                  <option value="">Unassigned</option>
+                                  <option value="A">A</option>
+                                  <option value="B">B</option>
+                                  <option value="C">C</option>
+                                </select>
+                              ) : (
+                                <span>{row.item_class ?? "\u2014"}</span>
+                              )}
+                            </TableCell>
+                            <TableCell>
                               <Badge variant={row.is_enabled ? "default" : "secondary"}>
                                 {row.is_enabled ? "Enabled" : "Not enabled"}
                               </Badge>
@@ -461,10 +512,7 @@ export default function BranchItemsPage() {
                   variant="ghost"
                   disabled={page === "1"}
                   onClick={() => {
-                    setSelectedIds(new Set())
-                    setBulkError("")
-                    setSelectedDeactivateIds(new Set())
-                    setBulkDeactivateError("")
+                    clearSelections()
                     updateParams({ page: String(Math.max(1, Number.parseInt(page, 10) - 1)) })
                   }}
                 >
@@ -475,10 +523,7 @@ export default function BranchItemsPage() {
                   variant="ghost"
                   disabled={!catalogQuery.data?.next}
                   onClick={() => {
-                    setSelectedIds(new Set())
-                    setBulkError("")
-                    setSelectedDeactivateIds(new Set())
-                    setBulkDeactivateError("")
+                    clearSelections()
                     updateParams({ page: String(Number.parseInt(page, 10) + 1) })
                   }}
                 >

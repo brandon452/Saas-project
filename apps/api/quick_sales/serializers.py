@@ -26,6 +26,7 @@ class QuickSaleCreateSerializer(serializers.Serializer):
     customer_name = serializers.CharField(required=False, allow_blank=True, default="")
     notes = serializers.CharField(required=False, allow_blank=True, default="")
     occurred_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, allow_null=True, default=None, max_length=255)
     lines = QuickSaleLineWriteSerializer(many=True, allow_empty=False)
 
     def __init__(self, *args, **kwargs):

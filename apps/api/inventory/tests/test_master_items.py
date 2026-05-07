@@ -123,7 +123,7 @@ class MasterItemApiTests(APITestCase):
             HTTP_HOST=self._host(self.acme.slug),
         )
         self.assertEqual(owner_response.status_code, 200)
-        owner_ids = {row["id"] for row in owner_response.data}
+        owner_ids = {row["id"] for row in owner_response.data["results"]}
         self.assertIn(str(self.master_b.id), owner_ids)
         self.assertNotIn(str(self.master_a.id), owner_ids)
         self.assertNotIn(str(self.inactive_master.id), owner_ids)
@@ -153,6 +153,27 @@ class MasterItemApiTests(APITestCase):
                 HTTP_HOST=self._host(self.acme.slug),
             ).status_code,
             403,
+        )
+
+    def test_org_master_items_excludes_master_items_with_inactive_org_item(self):
+        deactivated_master = MasterItem.objects.create(name="Deactivated Widget", sku="DEACT-1")
+        OrgItem.objects.create(
+            organization=self.acme,
+            master_item=deactivated_master,
+            name="My Override Name",
+            is_active=False,
+        )
+        self._auth(self.owner)
+        response = self.client.get(
+            f"/api/orgs/{self.acme.id}/master-items/",
+            HTTP_HOST=self._host(self.acme.slug),
+        )
+        self.assertEqual(response.status_code, 200)
+        result_ids = {row["id"] for row in response.data["results"]}
+        self.assertNotIn(
+            str(deactivated_master.id),
+            result_ids,
+            "A master item with an inactive OrgItem must not appear as available to activate",
         )
 
     def test_org_item_activation_requires_master_item_and_preserves_shape(self):

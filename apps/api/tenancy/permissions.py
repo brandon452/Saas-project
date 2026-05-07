@@ -23,6 +23,7 @@ ROLE_POLICY = {
         "list": {"OWNER", "ADMIN", "STAFF"},
         "retrieve": {"OWNER", "ADMIN", "STAFF"},
         "create": {"OWNER", "ADMIN"},
+        "partial_update": {"OWNER", "ADMIN"},
         "destroy": {"OWNER", "ADMIN"},
     },
     "stock_on_hand": {
@@ -37,6 +38,7 @@ ROLE_POLICY = {
         "list": {"OWNER", "ADMIN", "STAFF"},
         "retrieve": {"OWNER", "ADMIN", "STAFF"},
         "create": {"OWNER", "ADMIN"},
+        "generate_cycle": {"OWNER", "ADMIN"},
         "partial_update": {"OWNER", "ADMIN"},
         "start": {"OWNER", "ADMIN"},
         "submit": {"OWNER", "ADMIN"},
@@ -69,6 +71,9 @@ ROLE_POLICY = {
         "reactivate_contact": {"OWNER", "ADMIN"},
         "delete_contact": {"OWNER", "ADMIN"},
         "set_primary_contact": {"OWNER", "ADMIN"},
+        "export_csv": {"OWNER", "ADMIN", "STAFF"},
+        "catalog_items": {"OWNER", "ADMIN", "STAFF"},
+        "catalog_item_detail": {"OWNER", "ADMIN"},
     },
     "purchase_orders": {
         "list": {"OWNER", "ADMIN", "STAFF"},
@@ -83,11 +88,15 @@ ROLE_POLICY = {
         "add_line": {"OWNER", "ADMIN"},
         "update_line": {"OWNER", "ADMIN"},
         "remove_line": {"OWNER", "ADMIN"},
+        "export_csv": {"OWNER", "ADMIN", "STAFF"},
+        "export_pdf": {"OWNER", "ADMIN", "STAFF"},
+        "reconcile_status": {"OWNER", "ADMIN"},
     },
     "goods_receipts": {
         "list": {"OWNER", "ADMIN", "STAFF"},
         "retrieve": {"OWNER", "ADMIN", "STAFF"},
         "create": {"OWNER", "ADMIN", "STAFF"},
+        "export_csv": {"OWNER", "ADMIN", "STAFF"},
     },
     "branch_transfers": {
         "list": {"OWNER", "ADMIN", "STAFF"},
@@ -100,12 +109,21 @@ ROLE_POLICY = {
         "update": set(),
         "partial_update": set(),
         "destroy": set(),
+        "export_csv": {"OWNER", "ADMIN", "STAFF"},
     },
     "quick_sales": {
         "list": {"OWNER", "ADMIN", "STAFF"},
         "retrieve": {"OWNER", "ADMIN", "STAFF"},
         "create": {"OWNER", "ADMIN", "STAFF"},
         "void": {"OWNER", "ADMIN"},
+    },
+    "lot_tracking": {
+        "lot_override": {"OWNER"},
+    },
+    "scan_override": {
+        "over_pick": {"OWNER", "ADMIN"},
+        "receive_conflict": {"OWNER", "ADMIN"},
+        "count_exception": {"OWNER", "ADMIN"},
     },
 }
 
@@ -337,8 +355,11 @@ class RolePolicyPermission(BasePermission):
 
         parent = get_parent_membership(request)
         if parent and parent.parent_company_id == request.org.parent_company_id:
-            if resource == "branches" and parent.role == ParentCompanyMember.PARENT_ADMIN:
-                return action in {"list", "retrieve", "create", "update", "partial_update"}
+            if parent.role == ParentCompanyMember.PARENT_ADMIN:
+                if resource == "branches":
+                    return action in {"list", "retrieve", "create", "update", "partial_update"}
+                if resource == "suppliers":
+                    return allowed_roles is not None
             return request.method in ("GET", "HEAD", "OPTIONS")
 
         role = get_member_role(request)

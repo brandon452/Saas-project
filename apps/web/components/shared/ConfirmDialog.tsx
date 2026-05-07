@@ -17,8 +17,9 @@ interface ConfirmDialogProps {
   title: string
   description: string
   confirmLabel: string
-  onConfirm: () => void
+  onConfirm: () => void | Promise<void>
   destructive?: boolean
+  error?: string
 }
 
 export function ConfirmDialog({
@@ -29,6 +30,7 @@ export function ConfirmDialog({
   confirmLabel,
   onConfirm,
   destructive,
+  error,
 }: ConfirmDialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -37,10 +39,14 @@ export function ConfirmDialog({
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
+        {error ? <p className="text-sm text-destructive px-1">{error}</p> : null}
         <AlertDialogFooter>
           <AlertDialogCancel>Go back</AlertDialogCancel>
           <AlertDialogAction
-            onClick={onConfirm}
+            onClick={(e) => {
+              e.preventDefault()
+              void onConfirm()
+            }}
             className={
               destructive ? "bg-red-600 text-white hover:bg-red-700" : ""
             }

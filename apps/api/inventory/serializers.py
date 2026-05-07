@@ -79,7 +79,7 @@ class OrgItemSerializer(serializers.ModelSerializer):
     sku = serializers.CharField(source="master_item.sku", read_only=True)
     name = serializers.SerializerMethodField()
     name_override = serializers.CharField(source="name", read_only=True)  # raw override, blank if none set
-
+    preferred_supplier = serializers.SerializerMethodField()
 
     class Meta:
         model = OrgItem
@@ -92,11 +92,20 @@ class OrgItemSerializer(serializers.ModelSerializer):
             "sku",
             "is_active",
             "created_at",
+            "preferred_supplier",
         ]
-        read_only_fields = ["id", "organization", "sku", "created_at", "name", "name_override"]
+        read_only_fields = ["id", "organization", "sku", "created_at", "name", "name_override", "preferred_supplier"]
 
     def get_name(self, obj):
         return obj.display_name
+
+    def get_preferred_supplier(self, obj):
+        # Relies on Prefetch(to_attr="active_supplier_items") set in OrgItemViewSet.get_queryset.
+        # Falls back gracefully to None on retrieval paths without that prefetch (e.g. create).
+        for si in getattr(obj, "active_supplier_items", []):
+            if si.is_preferred:
+                return {"id": si.supplier.id, "display_name": si.supplier.display_name}
+        return None
 
 
 class OrgItemCreateSerializer(serializers.ModelSerializer):
@@ -130,9 +139,11 @@ class OrgItemCreateSerializer(serializers.ModelSerializer):
         existing = getattr(self, "_existing_inactive", None)
         if existing:
             existing.is_active = True
+            fields_to_update = ["is_active"]
             if "name" in validated_data:
                 existing.name = validated_data["name"]
-            existing.save(update_fields=["is_active", "name"])
+                fields_to_update.append("name")
+            existing.save(update_fields=fields_to_update)
             return existing
         return OrgItem.objects.create(**validated_data)
 
@@ -199,18 +210,56 @@ class BranchItemBulkDeactivateSerializer(serializers.Serializer):
 
     def validate_branch_items(self, value):
         request = self.context["request"]
+        # Dedupe preserving order — single source of truth for deduplication
         unique_ids = list(dict.fromkeys(value))
+        # Only fetch active items; already-inactive ones are silently counted by the view
         items = list(
             BranchItem.objects.filter(
                 id__in=unique_ids,
                 branch__organization=request.org,
+                is_active=True,
+            )
+        )
+        found_active_ids = {item.id for item in items}
+        # Validate all submitted IDs exist and belong to this org (active or not)
+        all_items_in_org = set(
+            BranchItem.objects.filter(
+                id__in=unique_ids,
+                branch__organization=request.org,
+            ).values_list("id", flat=True)
+        )
+        missing = [str(uid) for uid in unique_ids if uid not in all_items_in_org]
+        if missing:
+            raise serializers.ValidationError(
+                f"Some branch items were not found or do not belong to this organisation: {', '.join(missing)}"
+            )
+        # Store the deduplicated total so the view can compute already_inactive
+        self._unique_ids_count = len(unique_ids)
+        return items
+
+
+class OrgItemBulkActivateSerializer(serializers.Serializer):
+    master_items = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+        max_length=500,
+    )
+
+    def validate_master_items(self, value):
+        request = self.context["request"]
+        unique_ids = list(dict.fromkeys(value))
+        items = list(
+            MasterItem.objects.filter(
+                id__in=unique_ids,
+                parent_company=request.org.parent_company,
+                is_active=True,
             )
         )
         found_ids = {item.id for item in items}
         missing = [str(uid) for uid in unique_ids if uid not in found_ids]
         if missing:
             raise serializers.ValidationError(
-                f"Some branch items were not found or do not belong to this organisation: {', '.join(missing)}"
+                f"Some items were not found, inactive, or do not belong to this organisation: {', '.join(missing)}"
             )
         return items
 
@@ -228,20 +277,36 @@ class BranchItemBulkDeactivateSerializer(serializers.Serializer):
 
 class BranchItemCatalogSerializer(serializers.Serializer):
     """
-    Annotated OrgItem row for the branch catalog management page.
+    OrgItem row for the branch catalog management page.
 
-    Returns active OrgItems for the resolved org with branch-specific
-    enablement information for the requested branch.
+    active_branch_items is populated via prefetch_related in the view
+    (unique_together guarantees at most one entry per branch+org_item pair).
     """
 
     id = serializers.UUIDField()
     name = serializers.SerializerMethodField()
     sku = serializers.CharField(source="master_item.sku")
-    is_enabled = serializers.BooleanField()
-    branch_item_id = serializers.IntegerField(allow_null=True)
+    is_enabled = serializers.SerializerMethodField()
+    branch_item_id = serializers.SerializerMethodField()
+    item_class = serializers.SerializerMethodField()
+
+    def _active_bi(self, obj):
+        items = getattr(obj, "active_branch_items", [])
+        return items[0] if items else None
 
     def get_name(self, obj):
         return obj.display_name
+
+    def get_is_enabled(self, obj):
+        return self._active_bi(obj) is not None
+
+    def get_branch_item_id(self, obj):
+        bi = self._active_bi(obj)
+        return bi.id if bi else None
+
+    def get_item_class(self, obj):
+        bi = self._active_bi(obj)
+        return bi.item_class if bi else None
 
 
 class BranchItemSerializer(serializers.ModelSerializer):
@@ -250,7 +315,17 @@ class BranchItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = BranchItem
-        fields = ["id", "org_item", "branch", "name", "sku", "is_active", "created_at"]
+        fields = [
+            "id",
+            "org_item",
+            "branch",
+            "name",
+            "sku",
+            "item_class",
+            "next_cycle_count_date",
+            "is_active",
+            "created_at",
+        ]
         read_only_fields = ["id", "name", "sku", "created_at"]
 
     def get_name(self, obj):
@@ -260,7 +335,7 @@ class BranchItemSerializer(serializers.ModelSerializer):
 class BranchItemCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = BranchItem
-        fields = ["org_item", "branch"]
+        fields = ["org_item", "branch", "item_class", "next_cycle_count_date"]
         validators = []
 
     def validate_org_item(self, value):
@@ -276,28 +351,6 @@ class BranchItemCreateSerializer(serializers.ModelSerializer):
         if value.organization != request.org:
             raise serializers.ValidationError("Branch does not belong to this organisation.")
         return value
-
-    def validate(self, attrs):
-        org_item = attrs.get("org_item")
-        branch = attrs.get("branch")
-        existing = BranchItem.objects.filter(
-            org_item=org_item,
-            branch=branch,
-        ).first()
-        if existing and existing.is_active:
-            raise serializers.ValidationError(
-                {"org_item": "This item is already enabled at this branch."}
-            )
-        self._existing_inactive = existing if (existing and not existing.is_active) else None
-        return attrs
-
-    def create(self, validated_data):
-        existing = getattr(self, "_existing_inactive", None)
-        if existing:
-            existing.is_active = True
-            existing.save(update_fields=["is_active"])
-            return existing
-        return BranchItem.objects.create(**validated_data)
 
 
 class StockOnHandSerializer(serializers.ModelSerializer):
@@ -473,6 +526,9 @@ class StockTakeListSerializer(serializers.ModelSerializer):
             "id",
             "branch",
             "status",
+            "stock_take_type",
+            "cycle_item_class",
+            "scheduled_for",
             "notes",
             "total_lines_count",
             "counted_lines_count",
@@ -540,6 +596,9 @@ class StockTakeDetailSerializer(serializers.ModelSerializer):
             "id",
             "branch",
             "status",
+            "stock_take_type",
+            "cycle_item_class",
+            "scheduled_for",
             "notes",
             "lines",
             "total_lines_count",
@@ -595,13 +654,55 @@ class StockTakeDetailSerializer(serializers.ModelSerializer):
 class StockTakeCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = StockTake
-        fields = ["branch", "notes"]
+        fields = ["branch", "notes", "stock_take_type", "cycle_item_class", "scheduled_for"]
+
+    def validate(self, attrs):
+        stock_take_type = attrs.get("stock_take_type", StockTake.TYPE_FULL)
+        cycle_item_class = attrs.get("cycle_item_class")
+        scheduled_for = attrs.get("scheduled_for")
+        if stock_take_type == StockTake.TYPE_FULL:
+            if cycle_item_class is not None:
+                raise serializers.ValidationError(
+                    {"cycle_item_class": "cycle_item_class must be null for FULL stock takes."}
+                )
+            if scheduled_for is not None:
+                raise serializers.ValidationError(
+                    {"scheduled_for": "scheduled_for must be null for FULL stock takes."}
+                )
+        if stock_take_type == StockTake.TYPE_CYCLE:
+            if not cycle_item_class:
+                raise serializers.ValidationError(
+                    {"cycle_item_class": "cycle_item_class is required for CYCLE stock takes."}
+                )
+            if scheduled_for is None:
+                raise serializers.ValidationError(
+                    {"scheduled_for": "scheduled_for is required for CYCLE stock takes."}
+                )
+        return attrs
 
     def validate_branch(self, value):
         request = self.context["request"]
         if value.organization != request.org:
             raise serializers.ValidationError("Branch does not belong to this organisation.")
         return value
+
+
+class StockTakeGenerateCycleSerializer(serializers.Serializer):
+    branch_id = serializers.UUIDField()
+    cycle_item_class = serializers.ChoiceField(
+        choices=[BranchItem.CLASS_A, BranchItem.CLASS_B, BranchItem.CLASS_C]
+    )
+    scheduled_for = serializers.DateField(required=False)
+
+    def validate_branch_id(self, value):
+        request = self.context["request"]
+        try:
+            branch = Branch.objects.get(pk=value, organization=request.org)
+        except Branch.DoesNotExist:
+            raise serializers.ValidationError(
+                "Branch not found or does not belong to this organisation."
+            )
+        return branch
 
 
 class StockTakeLineBulkUpdateItemSerializer(serializers.Serializer):

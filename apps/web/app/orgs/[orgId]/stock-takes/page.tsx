@@ -5,6 +5,8 @@ import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { CreateStockTakeDialog } from "@/components/stock-takes/CreateStockTakeDialog"
+import { CycleDuePanel } from "@/components/stock-takes/CycleDuePanel"
+import { GenerateCycleCountDialog } from "@/components/stock-takes/GenerateCycleCountDialog"
 import { StockTakeStatusBadge } from "@/components/stock-takes/StockTakeStatusBadge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -36,9 +38,12 @@ export default function StockTakesPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [createOpen, setCreateOpen] = useState(false)
+  const [generateCycleOpen, setGenerateCycleOpen] = useState(false)
 
   const page = searchParams.get("page") ?? "1"
-  const stockTakesQuery = useStockTakes(orgId, { page })
+  const stockTakeType = searchParams.get("stock_take_type") ?? ""
+  const cycleItemClass = searchParams.get("cycle_item_class") ?? ""
+  const stockTakesQuery = useStockTakes(orgId, { page, stock_take_type: stockTakeType, cycle_item_class: cycleItemClass })
   const branchesQuery = usePOBranches(orgId)
 
   const branches = useMemo(
@@ -54,6 +59,17 @@ export default function StockTakesPage() {
     if (!nextPage) return
     const params = new URLSearchParams(searchParams.toString())
     params.set("page", nextPage)
+    router.replace(`${pathname}?${params.toString()}`)
+  }
+
+  function updateFilter(key: "stock_take_type" | "cycle_item_class", value: string) {
+    const params = new URLSearchParams(searchParams.toString())
+    if (value) {
+      params.set(key, value)
+    } else {
+      params.delete(key)
+    }
+    params.set("page", "1")
     router.replace(`${pathname}?${params.toString()}`)
   }
 
@@ -109,8 +125,41 @@ export default function StockTakesPage() {
           </p>
         </div>
         {canAccess(["OWNER", "ADMIN"]) ? (
-          <Button onClick={() => setCreateOpen(true)}>New Stock Take</Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setGenerateCycleOpen(true)}>
+              Generate Cycle Count
+            </Button>
+            <Button onClick={() => setCreateOpen(true)}>New Stock Take</Button>
+          </div>
         ) : null}
+      </div>
+
+      <div className="grid gap-3 rounded-xl border border-border bg-card p-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Type</label>
+          <select
+            value={stockTakeType}
+            onChange={(event) => updateFilter("stock_take_type", event.target.value)}
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none"
+          >
+            <option value="">All</option>
+            <option value="FULL">Full</option>
+            <option value="CYCLE">Cycle</option>
+          </select>
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Cycle Class</label>
+          <select
+            value={cycleItemClass}
+            onChange={(event) => updateFilter("cycle_item_class", event.target.value)}
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none"
+          >
+            <option value="">All</option>
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+          </select>
+        </div>
       </div>
 
       <Card>
@@ -122,6 +171,9 @@ export default function StockTakesPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Branch</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Class</TableHead>
+                  <TableHead>Scheduled</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Started</TableHead>
@@ -134,6 +186,9 @@ export default function StockTakesPage() {
                 {rows.map((stockTake) => (
                   <TableRow key={stockTake.id}>
                     <TableCell>{getStockTakeBranchLabel(stockTake.branch, branchesQuery.data)}</TableCell>
+                    <TableCell>{stockTake.stock_take_type}</TableCell>
+                    <TableCell>{stockTake.cycle_item_class ?? "\u2014"}</TableCell>
+                    <TableCell>{formatDateTime(stockTake.scheduled_for)}</TableCell>
                     <TableCell>
                       <StockTakeStatusBadge status={stockTake.status} />
                     </TableCell>
@@ -170,10 +225,18 @@ export default function StockTakesPage() {
         </div>
       </div>
 
+      <CycleDuePanel orgId={orgId} branches={branches} />
+
       <CreateStockTakeDialog
         orgId={orgId}
         open={createOpen}
         onOpenChange={setCreateOpen}
+        branches={branches}
+      />
+      <GenerateCycleCountDialog
+        orgId={orgId}
+        open={generateCycleOpen}
+        onOpenChange={setGenerateCycleOpen}
         branches={branches}
       />
     </div>

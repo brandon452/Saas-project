@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 
+from inventory.models import OrgItem
 from tenancy.models import TenantModel
 
 
@@ -55,6 +56,38 @@ class Supplier(TenantModel):
     @property
     def name(self):
         return self.display_name
+
+
+class SupplierItem(TenantModel):
+    supplier = models.ForeignKey(
+        Supplier,
+        on_delete=models.PROTECT,
+        related_name="supplier_items",
+    )
+    org_item = models.ForeignKey(
+        OrgItem,
+        on_delete=models.PROTECT,
+        related_name="supplier_items",
+    )
+    is_preferred = models.BooleanField(default=False)
+    unit_cost = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    lead_time_days = models.PositiveIntegerField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("supplier", "org_item")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["org_item"],
+                condition=models.Q(is_preferred=True, is_active=True),
+                name="unique_preferred_supplier_per_item",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.supplier} → {self.org_item}"
 
 
 class SupplierContact(models.Model):

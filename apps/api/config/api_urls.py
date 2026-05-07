@@ -15,15 +15,25 @@ from inventory.views import (
     BranchItemViewSet,
     ClosePeriodViewSet,
     MasterItemViewSet,
+    OrgItemBulkActivateView,
     OrgItemViewSet,
     OrgMasterItemView,
+    ScanResolveView,
     StockMovementViewSet,
     StockOnHandViewSet,
     StockTakeViewSet,
 )
 from purchase_orders.views import PurchaseOrderViewSet
 from quick_sales.views import QuickSaleViewSet
-from reports.views import PurchaseCostTrendView, StockValuationView
+from reports.views import (
+    InventoryAgingExportView,
+    InventoryAgingView,
+    PurchaseCostTrendView,
+    SlowDeadStockExportView,
+    SlowDeadStockView,
+    StockValuationExportView,
+    StockValuationView,
+)
 from suppliers.views import SupplierViewSet
 from tenancy.invitation_views import CreateParentMemberView, CreateUserView
 from tenancy.org_views import OrgGovernanceView, OrgListCreateView, OrgSettingsView
@@ -78,6 +88,31 @@ urlpatterns = [
         name="stock-valuation",
     ),
     path(
+        "orgs/<uuid:org_id>/reports/stock-valuation/export/csv/",
+        StockValuationExportView.as_view(),
+        name="stock-valuation-export-csv",
+    ),
+    path(
+        "orgs/<uuid:org_id>/reports/inventory-aging/",
+        InventoryAgingView.as_view(),
+        name="inventory-aging",
+    ),
+    path(
+        "orgs/<uuid:org_id>/reports/inventory-aging/export/csv/",
+        InventoryAgingExportView.as_view(),
+        name="inventory-aging-export-csv",
+    ),
+    path(
+        "orgs/<uuid:org_id>/reports/slow-dead-stock/",
+        SlowDeadStockView.as_view(),
+        name="slow-dead-stock",
+    ),
+    path(
+        "orgs/<uuid:org_id>/reports/slow-dead-stock/export/csv/",
+        SlowDeadStockExportView.as_view(),
+        name="slow-dead-stock-export-csv",
+    ),
+    path(
         "orgs/<uuid:org_id>/branch-items/catalog/",
         BranchItemCatalogView.as_view(),
         name="branch-items-catalog",
@@ -91,6 +126,16 @@ urlpatterns = [
         "orgs/<uuid:org_id>/branch-items/bulk-deactivate/",
         BranchItemBulkDeactivateView.as_view(),
         name="branch-items-bulk-deactivate",
+    ),
+    path(
+        "orgs/<uuid:org_id>/inventory/items/bulk-activate/",
+        OrgItemBulkActivateView.as_view(),
+        name="org-items-bulk-activate",
+    ),
+    path(
+        "orgs/<uuid:org_id>/inventory/items/resolve-scan/",
+        ScanResolveView.as_view(),
+        name="scan-resolve",
     ),
     path("orgs/<uuid:org_id>/", include(org_router.urls)),
     path("parent/", include(parent_router.urls)),

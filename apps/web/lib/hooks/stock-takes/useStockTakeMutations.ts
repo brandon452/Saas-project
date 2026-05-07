@@ -7,6 +7,7 @@ import { getCsrfHeader } from "@/lib/csrf"
 import type {
   BulkUpdateStockTakeLinesPayload,
   CreateStockTakePayload,
+  GenerateCycleCountPayload,
   StockTakeDetail,
   StockTakeLine,
   UpdateStockTakeLinePayload,
@@ -24,6 +25,21 @@ export function useStockTakeMutations(orgId: string) {
         headers,
         body: JSON.stringify(payload),
       }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["stock-takes", orgId] })
+    },
+  })
+
+  const generateCycleCount = useMutation({
+    mutationFn: (payload: GenerateCycleCountPayload) =>
+      apiRequest<StockTakeDetail & { created: boolean; generated_line_count: number }>(
+        `orgs/${orgId}/stock-takes/generate-cycle/`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        },
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["stock-takes", orgId] })
     },
@@ -116,6 +132,7 @@ export function useStockTakeMutations(orgId: string) {
 
   return {
     createStockTake,
+    generateCycleCount,
     updateStockTakeNotes,
     updateStockTakeLine,
     bulkUpdateStockTakeLines,

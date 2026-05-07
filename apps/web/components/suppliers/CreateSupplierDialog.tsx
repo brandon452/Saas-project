@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -27,6 +28,7 @@ export function CreateSupplierDialog({
   open,
   onOpenChange,
 }: CreateSupplierDialogProps) {
+  const router = useRouter()
   const { createSupplier } = useSupplierMutations(orgId)
   const [name, setName] = useState("")
   const [error, setError] = useState("")
@@ -49,8 +51,9 @@ export function CreateSupplierDialog({
 
     try {
       setError("")
-      await createSupplier.mutateAsync({ display_name: trimmedName })
+      const created = await createSupplier.mutateAsync({ display_name: trimmedName })
       handleOpenChange(false)
+      router.push(`/orgs/${orgId}/suppliers/${created.id}`)
     } catch (err) {
       const message = err instanceof Error ? err.message : ""
       if (message.includes("403")) {

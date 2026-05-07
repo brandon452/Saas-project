@@ -19,6 +19,7 @@ import {
 import { usePOBranches } from "@/lib/hooks/purchase-orders/usePOBranches"
 import { usePurchaseOrders } from "@/lib/hooks/purchase-orders/usePurchaseOrders"
 import { usePOSuppliers } from "@/lib/hooks/purchase-orders/usePOSuppliers"
+import { useExportCsv } from "@/lib/hooks/useExportCsv"
 import { useOrg } from "@/lib/hooks/useOrg"
 import { calculatePOTotal, formatPOValue } from "@/lib/utils/po"
 
@@ -33,8 +34,8 @@ export default function PurchaseOrdersPage() {
   const supplier = searchParams.get("supplier") ?? ""
   const branch = searchParams.get("branch") ?? ""
   const search = searchParams.get("search") ?? ""
-  const dateFrom = searchParams.get("created_at_after") ?? ""
   const dateTo = searchParams.get("created_at_before") ?? ""
+  const dateFrom = searchParams.get("created_at_after") ?? ""
 
   const purchaseOrdersQuery = usePurchaseOrders({
     orgId,
@@ -67,6 +68,19 @@ export default function PurchaseOrdersPage() {
 
   function navigatePage(nextPage: number) {
     updateFilter("page", String(nextPage))
+  }
+
+  const { exportStatus, exportError, triggerExport } = useExportCsv()
+
+  function handleExport() {
+    const params = new URLSearchParams()
+    if (status) params.set("status", status)
+    if (supplier) params.set("supplier", supplier)
+    if (branch) params.set("branch", branch)
+    if (search) params.set("search", search)
+    if (dateFrom) params.set("created_at_after", dateFrom)
+    if (dateTo) params.set("created_at_before", dateTo)
+    void triggerExport(`orgs/${orgId}/purchase-orders/export/csv/`, params)
   }
 
   const supplierMap = new Map((suppliersQuery.data ?? []).map((item) => [String(item.id), item.display_name]))
@@ -124,15 +138,28 @@ export default function PurchaseOrdersPage() {
             View and manage purchase orders for this organisation.
           </p>
         </div>
-        {canAccess(["OWNER", "ADMIN"]) ? (
-          <Link
-            href={`/orgs/${orgId}/purchase-orders/new`}
-            className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={exportStatus === "loading"}
+            onClick={handleExport}
           >
-            New Purchase Order
-          </Link>
-        ) : null}
+            {exportStatus === "loading" ? "Exporting…" : exportStatus === "success" ? "Exported!" : "Export CSV"}
+          </Button>
+          {canAccess(["OWNER", "ADMIN"]) ? (
+            <Link
+              href={`/orgs/${orgId}/purchase-orders/new`}
+              className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+            >
+              New Purchase Order
+            </Link>
+          ) : null}
+        </div>
       </div>
+      {exportStatus === "error" && exportError
+        ? <p className="text-sm text-destructive">{exportError}</p>
+        : null}
 
       <POFilters
         status={status}
@@ -175,7 +202,7 @@ export default function PurchaseOrdersPage() {
                     onClick={() => router.push(`/orgs/${orgId}/purchase-orders/${po.id}`)}
                   >
                     <TableCell className="font-medium">{po.po_number}</TableCell>
-                    <TableCell>{supplierMap.get(po.supplier) ?? "—"}</TableCell>
+                    <TableCell>{supplierMap.get(String(po.supplier)) ?? "—"}</TableCell>
                     <TableCell>{branchMap.get(po.branch) ?? "—"}</TableCell>
                     <TableCell>
                       <POStatusBadge status={po.status} />

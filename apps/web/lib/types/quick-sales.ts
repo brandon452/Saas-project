@@ -54,5 +54,6 @@ export interface CreateQuickSalePayload {
   customer_name: string
   notes: string
   occurred_at?: string
+  idempotency_key?: string
   lines: CreateQuickSaleLinePayload[]
 }

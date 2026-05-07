@@ -6,6 +6,8 @@ import { apiRequest } from "@/lib/api"
 import { getCsrfHeader } from "@/lib/csrf"
 import type {
   ActivateItemPayload,
+  BulkActivateOrgItemsPayload,
+  BulkActivateOrgItemsResponse,
   OrgItem,
   UpdateOrgItemPayload,
 } from "@/lib/types/org-items"
@@ -54,9 +56,23 @@ export function useOrgItemMutations(orgId: string) {
     },
   })
 
+  const bulkActivateItems = useMutation({
+    mutationFn: (payload: BulkActivateOrgItemsPayload) =>
+      apiRequest<BulkActivateOrgItemsResponse>(`orgs/${orgId}/inventory/items/bulk-activate/`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-items", orgId] })
+      queryClient.invalidateQueries({ queryKey: ["org-items", orgId, "available"] })
+    },
+  })
+
   return {
     activateItem,
     updateOrgItem,
     deactivateOrgItem,
+    bulkActivateItems,
   }
 }

@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { CreateSupplierDialog } from "@/components/suppliers/CreateSupplierDialog"
-import { SupplierPanel } from "@/components/suppliers/SupplierPanel"
 import { SupplierStatusBadge } from "@/components/suppliers/SupplierStatusBadge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -19,9 +18,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { useExportCsv } from "@/lib/hooks/useExportCsv"
 import { useSuppliers } from "@/lib/hooks/suppliers/useSuppliers"
 import { useOrg } from "@/lib/hooks/useOrg"
-import type { Supplier } from "@/lib/types/suppliers"
 
 export default function SuppliersPage() {
   const router = useRouter()
@@ -29,8 +28,6 @@ export default function SuppliersPage() {
   const searchParams = useSearchParams()
   const { orgId, canAccess } = useOrg()
 
-  const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null)
-  const [panelOpen, setPanelOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [searchDraft, setSearchDraft] = useState(searchParams.get("search") ?? "")
 
@@ -53,7 +50,6 @@ export default function SuppliersPage() {
 
   const updateParams = useCallback((next: Record<string, string | null>) => {
     const params = new URLSearchParams(searchParams.toString())
-
     for (const [key, value] of Object.entries(next)) {
       if (value === null || value === "") {
         params.delete(key)
@@ -61,7 +57,6 @@ export default function SuppliersPage() {
         params.set(key, value)
       }
     }
-
     const query = params.toString()
     router.replace(query ? `${pathname}?${query}` : pathname)
   }, [pathname, router, searchParams])
@@ -71,23 +66,31 @@ export default function SuppliersPage() {
       if (searchDraft === search) return
       updateParams({ search: searchDraft || null, page: "1" })
     }, 300)
-
     return () => window.clearTimeout(timer)
   }, [searchDraft, search, updateParams])
+
+  const { exportStatus, exportError, triggerExport } = useExportCsv()
+
+  function handleExport() {
+    const params = new URLSearchParams()
+    if (search) params.set("search", search)
+    if (isActiveParam) params.set("is_active", isActiveParam)
+    void triggerExport(`orgs/${orgId}/suppliers/export/csv/`, params)
+  }
+
+  function handleRowClick(supplierId: number) {
+    router.push(`/orgs/${orgId}/suppliers/${supplierId}`)
+  }
 
   const canManage = canAccess(["OWNER", "ADMIN"])
   const errorMessage = suppliersQuery.error instanceof Error ? suppliersQuery.error.message : ""
 
-  if (suppliersQuery.isLoading) {
-    return <SupplierListSkeleton />
-  }
+  if (suppliersQuery.isLoading) return <SupplierListSkeleton />
 
   if (errorMessage.includes("403")) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle>Permission denied</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle>Permission denied</CardTitle></CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
             You do not have permission to view suppliers in this organisation.
@@ -100,13 +103,9 @@ export default function SuppliersPage() {
   if (suppliersQuery.isError) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle>Could not load suppliers</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle>Could not load suppliers</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            There was a problem loading suppliers. Try again.
-          </p>
+          <p className="text-sm text-muted-foreground">There was a problem loading suppliers. Try again.</p>
           <Button onClick={() => void suppliersQuery.refetch()}>Retry</Button>
         </CardContent>
       </Card>
@@ -115,7 +114,6 @@ export default function SuppliersPage() {
 
   const suppliers = suppliersQuery.data?.results ?? []
   const count = suppliersQuery.data?.count ?? 0
-  const actionLabel = canManage ? "View / Edit" : "View"
 
   return (
     <div className="space-y-6">
@@ -126,8 +124,21 @@ export default function SuppliersPage() {
             Manage suppliers available for procurement workflows.
           </p>
         </div>
-        {canManage ? <Button onClick={() => setCreateOpen(true)}>New Supplier</Button> : null}
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={exportStatus === "loading"}
+            onClick={handleExport}
+          >
+            {exportStatus === "loading" ? "Exporting…" : exportStatus === "success" ? "Exported!" : "Export CSV"}
+          </Button>
+          {canManage ? <Button onClick={() => setCreateOpen(true)}>New Supplier</Button> : null}
+        </div>
       </div>
+      {exportStatus === "error" && exportError
+        ? <p className="text-sm text-destructive">{exportError}</p>
+        : null}
 
       <div className="grid gap-4 rounded-xl border border-border bg-card p-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))]">
         <div className="space-y-2">
@@ -139,18 +150,12 @@ export default function SuppliersPage() {
             onChange={(event) => setSearchDraft(event.target.value)}
           />
         </div>
-
         <div className="space-y-2">
           <Label htmlFor="supplier-status">Status</Label>
           <select
             id="supplier-status"
             value={isActiveParam ?? ""}
-            onChange={(event) =>
-              updateParams({
-                is_active: event.target.value || null,
-                page: "1",
-              })
-            }
+            onChange={(event) => updateParams({ is_active: event.target.value || null, page: "1" })}
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none"
           >
             <option value="">All</option>
@@ -172,8 +177,8 @@ export default function SuppliersPage() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Created At</TableHead>
-                  <TableHead>Actions</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -181,10 +186,7 @@ export default function SuppliersPage() {
                   <TableRow
                     key={supplier.id}
                     className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => {
-                      setSelectedSupplier(supplier)
-                      setPanelOpen(true)
-                    }}
+                    onClick={() => handleRowClick(supplier.id)}
                   >
                     <TableCell className="font-medium">
                       {supplier.display_name}
@@ -196,16 +198,13 @@ export default function SuppliersPage() {
                       <SupplierStatusBadge isActive={supplier.is_active} />
                     </TableCell>
                     <TableCell>{new Date(supplier.created_at).toLocaleDateString()}</TableCell>
-                    <TableCell>
+                    <TableCell className="text-right">
                       <Button
                         variant="ghost"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          setSelectedSupplier(supplier)
-                          setPanelOpen(true)
-                        }}
+                        size="sm"
+                        onClick={(e) => { e.stopPropagation(); handleRowClick(supplier.id) }}
                       >
-                        {actionLabel}
+                        {canManage ? "View / Edit" : "View"}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -219,35 +218,15 @@ export default function SuppliersPage() {
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted-foreground">Total suppliers: {count}</p>
         <div className="flex flex-wrap items-center gap-3">
-          <Button
-            variant="ghost"
-            disabled={page <= 1}
-            onClick={() => updateParams({ page: String(page - 1) })}
-          >
-            Previous
-          </Button>
+          <Button variant="ghost" disabled={page <= 1} onClick={() => updateParams({ page: String(page - 1) })}>Previous</Button>
           <span className="text-sm font-medium">Page {page}</span>
-          <Button
-            variant="ghost"
-            disabled={!suppliersQuery.data?.next}
-            onClick={() => updateParams({ page: String(page + 1) })}
-          >
-            Next
-          </Button>
+          <Button variant="ghost" disabled={!suppliersQuery.data?.next} onClick={() => updateParams({ page: String(page + 1) })}>Next</Button>
         </div>
       </div>
 
       {canManage ? (
         <CreateSupplierDialog orgId={orgId} open={createOpen} onOpenChange={setCreateOpen} />
       ) : null}
-
-      <SupplierPanel
-        orgId={orgId}
-        supplier={selectedSupplier}
-        open={panelOpen}
-        onOpenChange={setPanelOpen}
-        onSupplierChange={(supplier) => setSelectedSupplier(supplier)}
-      />
     </div>
   )
 }

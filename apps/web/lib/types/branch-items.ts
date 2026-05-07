@@ -4,6 +4,23 @@ export interface BranchCatalogRow {
   sku: string
   is_enabled: boolean
   branch_item_id: number | null
+  item_class: "A" | "B" | "C" | null
+}
+
+export interface BranchItemListRow {
+  id: number
+  org_item: string
+  branch: string
+  name: string
+  sku: string
+  item_class: "A" | "B" | "C" | null
+  next_cycle_count_date: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export interface UpdateBranchItemPayload {
+  item_class: "A" | "B" | "C" | null
 }
 
 export interface BranchCatalogResponse {

@@ -33,9 +33,9 @@ export default function QuickSalesPage() {
 
   const branch = searchParams.get("branch") ?? ""
   const status = searchParams.get("status") ?? ""
-  const fromDate = searchParams.get("from_date") ?? ""
   const toDate = searchParams.get("to_date") ?? ""
   const page = searchParams.get("page") ?? "1"
+  const fromDate = searchParams.get("from_date") ?? ""
 
   const branchesQuery = useBranches(orgId)
   const quickSalesQuery = useQuickSales({

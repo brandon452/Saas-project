@@ -5,6 +5,7 @@ from django.db import models
 from django.db.models import Case, Count, DecimalField, ExpressionWrapper, F, IntegerField, OuterRef, Subquery, Sum, Value, When
 from django.db.models.functions import Coalesce
 from django.utils import timezone
+from django_ratelimit.core import is_ratelimited
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
@@ -12,6 +13,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from branches.models import Branch
+from exports.audit import log_export_event
+from exports.config import get_csv_rate
+from exports.filenames import csv_filename
+from exports.rows.inventory_aging import AGING_HEADERS, to_aging_csv_row
+from exports.rows.slow_dead_stock import SLOW_DEAD_HEADERS, to_slow_dead_csv_row
+from exports.rows.stock_valuation import HEADERS, to_row as valuation_to_csv_row
+from exports.streaming import enforce_row_cap, stream_csv
 from goods_receipts.models import GoodsReceiptLine
 from inventory.models import (
     InventoryClosePeriod,
@@ -20,11 +28,35 @@ from inventory.models import (
     OrgItem,
     StockOnHand,
 )
+from inventory.services import get_org_local_today
 from suppliers.models import Supplier
 from tenancy.models import Organization
 from tenancy.permissions import IsOrgOwnerOrAdmin, IsParentMember, get_parent_membership
 
-from .serializers import CostTrendPointSerializer, StockValuationRowSerializer, StockValuationSummarySerializer
+from .queries import (
+    DEAD_THRESHOLD_DAYS,
+    SLOW_THRESHOLD_DAYS,
+    _get_org_tz,
+    aging_queryset,
+    aging_to_row,
+    format_row,
+    live_queryset,
+    resolve_period,
+    slow_dead_queryset,
+    slow_dead_to_row,
+    snapshot_queryset,
+    snapshot_to_row,
+    soh_to_row,
+)
+from .serializers import (
+    CostTrendPointSerializer,
+    InventoryAgingRowSerializer,
+    InventoryAgingSummarySerializer,
+    SlowDeadStockRowSerializer,
+    SlowDeadStockSummarySerializer,
+    StockValuationRowSerializer,
+    StockValuationSummarySerializer,
+)
 
 
 class StockValuationPagination(PageNumberPagination):
@@ -121,156 +153,13 @@ class StockValuationView(APIView):
             "branch_count": result["branch_count"],
         }
 
-    def _format_row(self, row):
-        qty = row["quantity_on_hand"]
-        latest_cost = row["latest_unit_cost"]
-        avg_cost = row["average_unit_cost"]
-        latest_val = (qty * latest_cost).quantize(self.Q2) if latest_cost is not None else None
-        avg_val = (qty * avg_cost).quantize(self.Q2) if avg_cost is not None else None
-        return {
-            "item_id": row["item_id"],
-            "item_name": row["item_name"],
-            "item_sku": row["item_sku"],
-            "branch_id": row["branch_id"],
-            "branch_name": row["branch_name"],
-            "quantity_on_hand": qty,
-            "latest_unit_cost": latest_cost.quantize(self.Q2) if latest_cost is not None else None,
-            "latest_valuation": latest_val,
-            "average_unit_cost": avg_cost.quantize(self.Q2) if avg_cost is not None else None,
-            "average_valuation": avg_val,
-        }
-
-    def _parse_pk(self, value, model, field_name):
-        try:
-            return model._meta.pk.to_python(value)
-        except (TypeError, ValueError, DjangoValidationError):
-            raise ValidationError({field_name: "Enter a valid ID."})
-
-    def _live_queryset(self, request):
-        """Return an annotated StockOnHand queryset with cost data."""
-        cost_subquery_base = InventoryCostState.objects.filter(
-            organization=request.org,
-            branch=OuterRef("branch"),
-            item=OuterRef("item"),
-        )
-
-        soh_qs = (
-            StockOnHand.objects
-            .for_org(request.org)
-            .filter(quantity__gt=0)
-            .select_related("item__master_item", "branch")
-            .annotate(
-                _latest_unit_cost=Subquery(
-                    cost_subquery_base.values("latest_unit_cost")[:1]
-                ),
-                _average_unit_cost=Subquery(
-                    cost_subquery_base.values("average_unit_cost")[:1]
-                ),
-            )
-        )
-
-        branch_id = request.query_params.get("branch")
-        if branch_id:
-            branch_id = self._parse_pk(branch_id, Branch, "branch")
-            soh_qs = soh_qs.filter(branch_id=branch_id)
-
-        search = request.query_params.get("search", "").strip()
-        if search:
-            soh_qs = soh_qs.filter(
-                models.Q(item__master_item__name__icontains=search)
-                | models.Q(item__master_item__sku__icontains=search)
-                | models.Q(item__name__icontains=search)
-            )
-
-        # Sort at DB level using the previous report semantics:
-        # rows with a latest valuation first, then highest latest valuation.
-        soh_qs = soh_qs.annotate(
-            _has_latest=Case(
-                When(_latest_unit_cost__isnull=True, then=Value(1)),
-                default=Value(0),
-                output_field=IntegerField(),
-            ),
-            _sort_val=ExpressionWrapper(
-                F("quantity") * Coalesce(F("_latest_unit_cost"), Value(Decimal("0"))),
-                output_field=DecimalField(max_digits=30, decimal_places=4),
-            )
-        ).order_by(
-            "_has_latest",
-            F("_sort_val").desc(),
-        )
-
-        return soh_qs
-
-    def _soh_to_row(self, soh):
-        return {
-            "item_id": soh.item_id,
-            "item_name": soh.item.display_name,
-            "item_sku": soh.item.master_item.sku,
-            "branch_id": soh.branch_id,
-            "branch_name": soh.branch.name,
-            "quantity_on_hand": soh.quantity,
-            "latest_unit_cost": soh._latest_unit_cost,
-            "average_unit_cost": soh._average_unit_cost,
-        }
-
-    def _snapshot_queryset(self, request, period):
-        qs = (
-            InventoryCloseSnapshot.objects
-            .filter(organization=request.org, period=period, quantity_on_hand__gt=0)
-            .select_related("item__master_item", "branch")
-        )
-
-        branch_id = request.query_params.get("branch")
-        if branch_id:
-            branch_id = self._parse_pk(branch_id, Branch, "branch")
-            qs = qs.filter(branch_id=branch_id)
-
-        search = request.query_params.get("search", "").strip()
-        if search:
-            qs = qs.filter(
-                models.Q(item__master_item__name__icontains=search)
-                | models.Q(item__master_item__sku__icontains=search)
-                | models.Q(item__name__icontains=search)
-            )
-
-        # Sort at DB level using the previous report semantics:
-        # rows with a latest valuation first, then highest latest valuation.
-        qs = qs.annotate(
-            _has_latest=Case(
-                When(latest_unit_cost__isnull=True, then=Value(1)),
-                default=Value(0),
-                output_field=IntegerField(),
-            ),
-            _sort_val=ExpressionWrapper(
-                F("quantity_on_hand") * Coalesce(F("latest_unit_cost"), Value(Decimal("0"))),
-                output_field=DecimalField(max_digits=30, decimal_places=4),
-            )
-        ).order_by(
-            "_has_latest",
-            F("_sort_val").desc(),
-        )
-
-        return qs
-
-    def _snapshot_to_row(self, snap):
-        return {
-            "item_id": snap.item_id,
-            "item_name": snap.item.display_name,
-            "item_sku": snap.item.master_item.sku,
-            "branch_id": snap.branch_id,
-            "branch_name": snap.branch.name,
-            "quantity_on_hand": snap.quantity_on_hand,
-            "latest_unit_cost": snap.latest_unit_cost,
-            "average_unit_cost": snap.average_unit_cost,
-        }
-
     def _paginate_and_respond(self, request, queryset, row_fn, summary_fn):
         summary = summary_fn(queryset)
         if summary["item_count"] == 0:
             return self._empty_response()
 
         page = self.paginator.paginate_queryset(queryset, request, view=self)
-        formatted = [self._format_row(row_fn(obj)) for obj in page]
+        formatted = [format_row(row_fn(obj)) for obj in page]
         serialized = StockValuationRowSerializer(formatted, many=True).data
 
         paginated = self.paginator.get_paginated_response(serialized)
@@ -280,32 +169,72 @@ class StockValuationView(APIView):
     def get(self, request, org_id=None, *args, **kwargs):
         period_id = request.query_params.get("period_id")
         if period_id:
-            try:
-                period = InventoryClosePeriod.objects.get(
-                    pk=period_id,
-                    organization=request.org,
-                )
-            except (InventoryClosePeriod.DoesNotExist, DjangoValidationError, ValueError):
-                raise ValidationError({"period_id": "Period not found or does not belong to this organisation."})
-
-            if period.status == InventoryClosePeriod.OPEN:
-                raise ValidationError({"detail": "Period has not been closed; no authoritative snapshot exists."})
-            if period.status == InventoryClosePeriod.CLOSING:
-                raise ValidationError({"detail": "Period is currently closing."})
-
+            period = resolve_period(period_id, request.org)
             return self._paginate_and_respond(
                 request,
-                self._snapshot_queryset(request, period),
-                self._snapshot_to_row,
+                snapshot_queryset(request, period),
+                snapshot_to_row,
                 self._snapshot_summary,
             )
 
         return self._paginate_and_respond(
             request,
-            self._live_queryset(request),
-            self._soh_to_row,
+            live_queryset(request),
+            soh_to_row,
             self._live_summary,
         )
+
+
+class StockValuationExportView(APIView):
+
+    def get_permissions(self):
+        if get_parent_membership(self.request):
+            return [IsAuthenticated(), IsParentMember()]
+        return [IsAuthenticated(), IsOrgOwnerOrAdmin()]
+
+    def initial(self, request, *args, **kwargs):
+        org_id = self.kwargs.get("org_id")
+        try:
+            request.org = Organization.objects.get(pk=org_id, is_active=True)
+        except Organization.DoesNotExist:
+            raise NotFound("Organization not found.")
+
+        parent_membership = get_parent_membership(request)
+        request.parent_role = parent_membership.role if parent_membership else None
+        super().initial(request, *args, **kwargs)
+
+    def get(self, request, org_id=None, *args, **kwargs):
+        if is_ratelimited(request, group="valuation_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
+            return Response(
+                {"detail": "Too many export requests. Please wait before exporting again."},
+                status=429,
+            )
+
+        period_id = request.query_params.get("period_id")
+        if period_id:
+            period = resolve_period(period_id, request.org)
+            qs = snapshot_queryset(request, period)
+            row_fn = snapshot_to_row
+        else:
+            qs = live_queryset(request)
+            row_fn = soh_to_row
+
+        row_count = enforce_row_cap(qs)
+
+        log_export_event(
+            organization=request.org,
+            actor_user=request.user,
+            resource="stock_valuation",
+            format="csv",
+            filters=dict(request.query_params),
+            row_count=row_count,
+        )
+
+        def _iter_rows():
+            for obj in qs.iterator(chunk_size=500):
+                yield valuation_to_csv_row(format_row(row_fn(obj)))
+
+        return stream_csv(HEADERS, _iter_rows(), csv_filename("stock-valuation"))
 
 
 class PurchaseCostTrendView(APIView):
@@ -446,3 +375,275 @@ class PurchaseCostTrendView(APIView):
             "total_count": total_count,
             "limit": self.MAX_POINTS,
         })
+
+
+# ---------------------------------------------------------------------------
+# Shared mixin for org resolution + permissions (DRY for new report views)
+# ---------------------------------------------------------------------------
+
+class _OrgReportMixin:
+    """Mixin that handles org resolution and owner/admin permission check."""
+
+    def get_permissions(self):
+        if get_parent_membership(self.request):
+            return [IsAuthenticated(), IsParentMember()]
+        return [IsAuthenticated(), IsOrgOwnerOrAdmin()]
+
+    def initial(self, request, *args, **kwargs):
+        org_id = self.kwargs.get("org_id")
+        try:
+            request.org = Organization.objects.get(pk=org_id, is_active=True)
+        except Organization.DoesNotExist:
+            raise NotFound("Organization not found.")
+        parent_membership = get_parent_membership(request)
+        request.parent_role = parent_membership.role if parent_membership else None
+        super().initial(request, *args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Inventory Aging
+# ---------------------------------------------------------------------------
+
+class InventoryAgingPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = "page_size"
+    max_page_size = 200
+
+
+class InventoryAgingView(_OrgReportMixin, APIView):
+    Q2 = Decimal("0.01")
+    pagination_class = InventoryAgingPagination
+
+    @property
+    def paginator(self):
+        if not hasattr(self, "_paginator"):
+            self._paginator = self.pagination_class()
+        return self._paginator
+
+    def _summary(self, qs, today_local, org_tz):
+        from django.db.models import Min
+
+        result = qs.aggregate(
+            total_latest=Sum(
+                ExpressionWrapper(
+                    F("quantity") * F("_latest_unit_cost"),
+                    output_field=DecimalField(max_digits=30, decimal_places=4),
+                )
+            ),
+            total_average=Sum(
+                ExpressionWrapper(
+                    F("quantity") * F("_average_unit_cost"),
+                    output_field=DecimalField(max_digits=30, decimal_places=4),
+                )
+            ),
+            item_count=Count("item_id", distinct=True),
+            branch_count=Count("branch_id", distinct=True),
+            oldest_receipt=Min("_last_receipt_at"),
+        )
+        oldest_ts = result["oldest_receipt"]
+        oldest_age_days = (
+            (today_local - oldest_ts.astimezone(org_tz).date()).days
+            if oldest_ts else None
+        )
+        return {
+            "total_latest_valuation": result["total_latest"].quantize(self.Q2) if result["total_latest"] else None,
+            "total_average_valuation": result["total_average"].quantize(self.Q2) if result["total_average"] else None,
+            "item_count": result["item_count"],
+            "branch_count": result["branch_count"],
+            "oldest_age_days": oldest_age_days,
+        }
+
+    def get(self, request, org_id=None, *args, **kwargs):
+        today_local = get_org_local_today(request.org)
+        org_tz = _get_org_tz(request.org)
+        qs = aging_queryset(request)
+
+        summary = self._summary(qs, today_local, org_tz)
+        if summary["item_count"] == 0:
+            return Response({
+                "summary": InventoryAgingSummarySerializer({
+                    "total_latest_valuation": None,
+                    "total_average_valuation": None,
+                    "item_count": 0,
+                    "branch_count": 0,
+                    "oldest_age_days": None,
+                }).data,
+                "count": 0,
+                "next": None,
+                "previous": None,
+                "results": [],
+            })
+
+        page = self.paginator.paginate_queryset(qs, request, view=self)
+        rows = [aging_to_row(obj, today_local, org_tz) for obj in page]
+        serialized = InventoryAgingRowSerializer(rows, many=True).data
+
+        paginated = self.paginator.get_paginated_response(serialized)
+        paginated.data["summary"] = InventoryAgingSummarySerializer(summary).data
+        return paginated
+
+
+class InventoryAgingExportView(_OrgReportMixin, APIView):
+
+    def get(self, request, org_id=None, *args, **kwargs):
+        if is_ratelimited(request, group="aging_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
+            return Response(
+                {"detail": "Too many export requests. Please wait before exporting again."},
+                status=429,
+            )
+
+        today_local = get_org_local_today(request.org)
+        org_tz = _get_org_tz(request.org)
+        qs = aging_queryset(request)
+        row_count = enforce_row_cap(qs)
+
+        log_export_event(
+            organization=request.org,
+            actor_user=request.user,
+            resource="inventory_aging",
+            format="csv",
+            filters=dict(request.query_params),
+            row_count=row_count,
+        )
+
+        def _iter_rows():
+            for obj in qs.iterator(chunk_size=500):
+                yield to_aging_csv_row(aging_to_row(obj, today_local, org_tz))
+
+        return stream_csv(AGING_HEADERS, _iter_rows(), csv_filename("inventory-aging"))
+
+
+# ---------------------------------------------------------------------------
+# Slow / Dead Stock
+# ---------------------------------------------------------------------------
+
+class SlowDeadStockPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = "page_size"
+    max_page_size = 200
+
+
+class SlowDeadStockView(_OrgReportMixin, APIView):
+    Q2 = Decimal("0.01")
+    pagination_class = SlowDeadStockPagination
+
+    @property
+    def paginator(self):
+        if not hasattr(self, "_paginator"):
+            self._paginator = self.pagination_class()
+        return self._paginator
+
+    def _summary(self, qs, today_local, org_tz):
+        dead_cutoff = timezone.make_aware(
+            datetime.combine(today_local - timedelta(days=DEAD_THRESHOLD_DAYS - 1), time.min),
+            org_tz,
+        )
+        slow_cutoff = timezone.make_aware(
+            datetime.combine(today_local - timedelta(days=SLOW_THRESHOLD_DAYS - 1), time.min),
+            org_tz,
+        )
+
+        result = qs.aggregate(
+            slow_count=Count(
+                Case(
+                    When(_effective_ts__gte=dead_cutoff, _effective_ts__lt=slow_cutoff, then=Value(1)),
+                    output_field=IntegerField(),
+                )
+            ),
+            dead_count=Count(
+                Case(
+                    When(_effective_ts__lt=dead_cutoff, then=Value(1)),
+                    output_field=IntegerField(),
+                )
+            ),
+            total_slow_val=Sum(
+                Case(
+                    When(
+                        _effective_ts__gte=dead_cutoff,
+                        _effective_ts__lt=slow_cutoff,
+                        then=ExpressionWrapper(
+                            F("quantity") * F("_latest_unit_cost"),
+                            output_field=DecimalField(max_digits=30, decimal_places=4),
+                        ),
+                    ),
+                    output_field=DecimalField(max_digits=30, decimal_places=4),
+                )
+            ),
+            total_dead_val=Sum(
+                Case(
+                    When(
+                        _effective_ts__lt=dead_cutoff,
+                        then=ExpressionWrapper(
+                            F("quantity") * F("_latest_unit_cost"),
+                            output_field=DecimalField(max_digits=30, decimal_places=4),
+                        ),
+                    ),
+                    output_field=DecimalField(max_digits=30, decimal_places=4),
+                )
+            ),
+        )
+        return {
+            "slow_count": result["slow_count"] or 0,
+            "dead_count": result["dead_count"] or 0,
+            "total_slow_valuation": result["total_slow_val"].quantize(self.Q2) if result["total_slow_val"] else None,
+            "total_dead_valuation": result["total_dead_val"].quantize(self.Q2) if result["total_dead_val"] else None,
+        }
+
+    def get(self, request, org_id=None, *args, **kwargs):
+        today_local = get_org_local_today(request.org)
+        org_tz = _get_org_tz(request.org)
+        qs = slow_dead_queryset(request)
+
+        total = qs.count()
+        if total == 0:
+            return Response({
+                "summary": SlowDeadStockSummarySerializer({
+                    "slow_count": 0,
+                    "dead_count": 0,
+                    "total_slow_valuation": None,
+                    "total_dead_valuation": None,
+                }).data,
+                "count": 0,
+                "next": None,
+                "previous": None,
+                "results": [],
+            })
+
+        summary = self._summary(qs, today_local, org_tz)
+        page = self.paginator.paginate_queryset(qs, request, view=self)
+        rows = [slow_dead_to_row(obj, today_local, org_tz) for obj in page]
+        serialized = SlowDeadStockRowSerializer(rows, many=True).data
+
+        paginated = self.paginator.get_paginated_response(serialized)
+        paginated.data["summary"] = SlowDeadStockSummarySerializer(summary).data
+        return paginated
+
+
+class SlowDeadStockExportView(_OrgReportMixin, APIView):
+
+    def get(self, request, org_id=None, *args, **kwargs):
+        if is_ratelimited(request, group="slow_dead_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
+            return Response(
+                {"detail": "Too many export requests. Please wait before exporting again."},
+                status=429,
+            )
+
+        today_local = get_org_local_today(request.org)
+        org_tz = _get_org_tz(request.org)
+        qs = slow_dead_queryset(request)
+        row_count = enforce_row_cap(qs)
+
+        log_export_event(
+            organization=request.org,
+            actor_user=request.user,
+            resource="slow_dead_stock",
+            format="csv",
+            filters=dict(request.query_params),
+            row_count=row_count,
+        )
+
+        def _iter_rows():
+            for obj in qs.iterator(chunk_size=500):
+                yield to_slow_dead_csv_row(slow_dead_to_row(obj, today_local, org_tz))
+
+        return stream_csv(SLOW_DEAD_HEADERS, _iter_rows(), csv_filename("slow-dead-stock"))
