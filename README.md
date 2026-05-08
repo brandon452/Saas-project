@@ -61,7 +61,7 @@ npm run dev
 - Branch/org/role enforcement happens in scoped view logic (for example `OrgScopedViewSetMixin` + `BranchScopedMixin`), not at header-parse time.
 - All API viewsets/services must call `.for_org(request.org)` explicitly.
 - Manager auto-scope is defense in depth only.
-- Bare hosts/IP addresses set `request.org = None`; only non-tenant endpoints should be called.
+- Requests without an `/api/orgs/{org_id}/...` URL do not have organization context; only non-tenant endpoints should be called.
 - Django admin is intentionally unscoped and superuser-only.
 
 ## Stock Movement Audit + Idempotency
