@@ -55,28 +55,19 @@ docs/initial-run.md
 npm run dev
 ```
 
-## Hosts Entries (Windows)
-Add to `C:\Windows\System32\drivers\etc\hosts`:
-
-```text
-127.0.0.1 acme.localhost
-127.0.0.1 globex.localhost
-```
-
 ## Tenancy Model
 - Organization is resolved from `/api/orgs/{org_id}/...` URL kwargs in org-scoped views/mixins.
 - `X-BRANCH-ID` is parsed by middleware and attached as `request.branch` when possible.
 - Branch/org/role enforcement happens in scoped view logic (for example `OrgScopedViewSetMixin` + `BranchScopedMixin`), not at header-parse time.
 - All API viewsets/services must call `.for_org(request.org)` explicitly.
 - Manager auto-scope is defense in depth only.
-- If a tenant queryset is accessed during request handling without org context, runtime error is raised.
 - Bare hosts/IP addresses set `request.org = None`; only non-tenant endpoints should be called.
 - Django admin is intentionally unscoped and superuser-only.
 
 ## Stock Movement Audit + Idempotency
 - Stock writes must always go through `record_stock_movement()` in `apps/api/inventory/services.py`.
 - Direct writes to `StockOnHand` or `StockLedger` from ViewSets are prohibited.
-- Movement create endpoint: `POST /api/inventory/movements/`.
+- Movement create endpoint: `POST /api/orgs/{org_id}/inventory/movements/`.
 - `reference_type` + `reference_id` are audit links back to source business documents. They are not duplicate prevention.
 - `reason` is a human-readable explanation (required by convention for manual adjustments).
 - `performed_by` is always set server-side from `request.user` and never trusted from client input.

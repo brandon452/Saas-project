@@ -1,33 +1,29 @@
-# Seeding Guide
+# Seeding Guide (Current Architecture)
 
 ## Purpose
-Use this file to quickly reset and seed local demo data in PostgreSQL for this project.
+Seed local demo data for the current multi-tenant model:
+- `ParentCompany`
+- `Organization`
+- `Branch`
+- `MasterItem` -> `OrgItem` -> `BranchItem`
+- Stock via `record_stock_movement()`
 
-## One Command Option
-From repo root:
+This guide matches the current URL-based tenancy (`/api/orgs/{org_id}/...`).
+
+## Prerequisites
+- PostgreSQL running locally
+- `apps/api/.venv` created
+- `apps/api/.env` configured
+
+Install dependencies if needed:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\seed.ps1
+pip install -r apps/api/requirements.txt
+npm install
 ```
-
-With full DB reset:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\seed.ps1 -ResetDb
-```
-
-## Defaults Used
-From `apps/api/.env`:
-- DB: `inventory_main`
-- DB user: `inventory_user`
-- DB password: `admin`
-
-From local setup:
-- Postgres superuser: `postgres`
-- Postgres superuser password: `admin`
 
 ## 1. Reset Database (Optional)
-This drops and recreates `inventory_main`.
+Use this only if you want a clean local DB.
 
 ```powershell
 $env:PGPASSWORD='admin'
@@ -41,7 +37,7 @@ psql -U postgres -h 127.0.0.1 -d postgres -w -c "GRANT ALL PRIVILEGES ON DATABAS
 npm run api:migrate
 ```
 
-## 3. Create Superuser
+## 3. Create Superuser (Optional)
 ```powershell
 $env:DJANGO_SUPERUSER_USERNAME='admin'
 $env:DJANGO_SUPERUSER_EMAIL='admin@example.com'
@@ -49,104 +45,178 @@ $env:DJANGO_SUPERUSER_PASSWORD='admin123!'
 apps\api\.venv\Scripts\python.exe apps\api\manage.py createsuperuser --noinput
 ```
 
-If it already exists, Django will report that and continue.
+## 4. Seed Demo Data
+Run this from repo root:
 
-## 4. Seed Demo Users, Orgs, Branches, Items
 ```powershell
 apps\api\.venv\Scripts\python.exe apps\api\manage.py shell -c @'
+from decimal import Decimal
 from django.contrib.auth import get_user_model
-from tenancy.models import Organization, OrganizationMember
+from tenancy.models import ParentCompany, Organization, OrganizationMember
 from branches.models import Branch
-from inventory.models import Item, StockOnHand, StockLedger
+from inventory.models import MasterItem, OrgItem, BranchItem, StockOnHand, StockLedger
+from inventory.services import record_stock_movement
 
 User = get_user_model()
 
+# Parent companies
+parent_a, _ = ParentCompany.objects.get_or_create(
+    slug="parent-a",
+    defaults={"name": "Parent A", "is_active": True},
+)
+parent_b, _ = ParentCompany.objects.get_or_create(
+    slug="parent-b",
+    defaults={"name": "Parent B", "is_active": True},
+)
+
 # Organizations
-acme, _ = Organization.objects.get_or_create(slug="acme", defaults={"name": "Acme"})
-globex, _ = Organization.objects.get_or_create(slug="globex", defaults={"name": "Globex"})
+acme, _ = Organization.objects.get_or_create(
+    slug="acme",
+    defaults={"name": "Acme", "parent_company": parent_a, "is_active": True},
+)
+globex, _ = Organization.objects.get_or_create(
+    slug="globex",
+    defaults={"name": "Globex", "parent_company": parent_a, "is_active": True},
+)
+initech, _ = Organization.objects.get_or_create(
+    slug="initech",
+    defaults={"name": "Initech", "parent_company": parent_b, "is_active": True},
+)
 
 # Users
-acme_user, _ = User.objects.get_or_create(username="acme_user", defaults={"email": "acme@example.com"})
-acme_user.set_password("Passw0rd!")
-acme_user.save()
+acme_admin, _ = User.objects.get_or_create(username="acme_admin", defaults={"email": "acme@example.com"})
+acme_admin.set_password("Passw0rd!")
+acme_admin.save(update_fields=["password"])
 
-globex_user, _ = User.objects.get_or_create(username="globex_user", defaults={"email": "globex@example.com"})
-globex_user.set_password("Passw0rd!")
-globex_user.save()
+globex_admin, _ = User.objects.get_or_create(username="globex_admin", defaults={"email": "globex@example.com"})
+globex_admin.set_password("Passw0rd!")
+globex_admin.save(update_fields=["password"])
 
-# Memberships
-OrganizationMember.objects.update_or_create(
-    user=acme_user, organization=acme, defaults={"role": "ADMIN", "is_active": True}
-)
-OrganizationMember.objects.update_or_create(
-    user=globex_user, organization=globex, defaults={"role": "ADMIN", "is_active": True}
-)
+acme_staff, _ = User.objects.get_or_create(username="acme_staff", defaults={"email": "acme_staff@example.com"})
+acme_staff.set_password("Passw0rd!")
+acme_staff.save(update_fields=["password"])
 
 # Branches
 acme_branch, _ = Branch.objects.for_org(acme).get_or_create(
-    organization=acme, code="ACME-MAIN", defaults={"name": "Acme Main"}
+    organization=acme,
+    code="ACME-MAIN",
+    defaults={"name": "Acme Main"},
 )
 globex_branch, _ = Branch.objects.for_org(globex).get_or_create(
-    organization=globex, code="GLOBEX-MAIN", defaults={"name": "Globex Main"}
+    organization=globex,
+    code="GLOBEX-MAIN",
+    defaults={"name": "Globex Main"},
+)
+initech_branch, _ = Branch.objects.for_org(initech).get_or_create(
+    organization=initech,
+    code="INITECH-MAIN",
+    defaults={"name": "Initech Main"},
 )
 
-# Items
-acme_item, _ = Item.objects.for_org(acme).update_or_create(
-    organization=acme, sku="ACME-001", defaults={"name": "Acme Item", "is_active": True}
+# Memberships
+OrganizationMember.objects.update_or_create(
+    user=acme_admin,
+    organization=acme,
+    defaults={"role": OrganizationMember.ROLE_ADMIN, "is_active": True, "assigned_branch": None},
 )
-globex_item, _ = Item.objects.for_org(globex).update_or_create(
-    organization=globex, sku="GLOBEX-001", defaults={"name": "Globex Item", "is_active": True}
+OrganizationMember.objects.update_or_create(
+    user=globex_admin,
+    organization=globex,
+    defaults={"role": OrganizationMember.ROLE_ADMIN, "is_active": True, "assigned_branch": None},
+)
+OrganizationMember.objects.update_or_create(
+    user=acme_staff,
+    organization=acme,
+    defaults={"role": OrganizationMember.ROLE_STAFF, "is_active": True, "assigned_branch": acme_branch},
 )
 
-# Reset stock rows for deterministic demos
-StockLedger.objects.for_org(acme).filter(branch=acme_branch, item=acme_item).delete()
-StockOnHand.objects.for_org(acme).filter(branch=acme_branch, item=acme_item).delete()
-StockLedger.objects.for_org(globex).filter(branch=globex_branch, item=globex_item).delete()
-StockOnHand.objects.for_org(globex).filter(branch=globex_branch, item=globex_item).delete()
+# Master + org + branch items
+master_acme, _ = MasterItem.objects.get_or_create(
+    parent_company=parent_a,
+    sku="ACME-001",
+    defaults={"name": "Acme Demo Item", "is_active": True},
+)
+master_globex, _ = MasterItem.objects.get_or_create(
+    parent_company=parent_a,
+    sku="GLOBEX-001",
+    defaults={"name": "Globex Demo Item", "is_active": True},
+)
+master_initech, _ = MasterItem.objects.get_or_create(
+    parent_company=parent_b,
+    sku="INITECH-001",
+    defaults={"name": "Initech Demo Item", "is_active": True},
+)
+
+acme_org_item, _ = OrgItem.objects.for_org(acme).get_or_create(
+    organization=acme,
+    master_item=master_acme,
+    defaults={"name": "Acme Item", "is_active": True},
+)
+globex_org_item, _ = OrgItem.objects.for_org(globex).get_or_create(
+    organization=globex,
+    master_item=master_globex,
+    defaults={"name": "Globex Item", "is_active": True},
+)
+initech_org_item, _ = OrgItem.objects.for_org(initech).get_or_create(
+    organization=initech,
+    master_item=master_initech,
+    defaults={"name": "Initech Item", "is_active": True},
+)
+
+BranchItem.objects.get_or_create(branch=acme_branch, org_item=acme_org_item, defaults={"is_active": True})
+BranchItem.objects.get_or_create(branch=globex_branch, org_item=globex_org_item, defaults={"is_active": True})
+BranchItem.objects.get_or_create(branch=initech_branch, org_item=initech_org_item, defaults={"is_active": True})
+
+# Reset stock rows for deterministic seed
+StockLedger.objects.for_org(acme).filter(branch=acme_branch, item=acme_org_item).delete()
+StockOnHand.objects.for_org(acme).filter(branch=acme_branch, item=acme_org_item).delete()
+
+# Seed opening stock using the canonical service
+record_stock_movement(
+    org=acme,
+    branch=acme_branch,
+    item=acme_org_item,
+    quantity=Decimal("50.0000"),
+    movement_type=StockLedger.MOVEMENT_RECEIPT,
+    unit_cost=Decimal("2.5000"),
+    reference_type="SEED",
+    reference_id="ACME-OPENING",
+    reason="Local demo seed",
+    performed_by=acme_admin,
+    idempotency_key="seed-acme-opening-v1",
+)
 
 print("Seed complete")
-print("acme branch:", acme_branch.id)
-print("globex branch:", globex_branch.id)
+print(f"acme org id: {acme.id}")
+print(f"acme branch id: {acme_branch.id}")
+print(f"acme item id: {acme_org_item.id}")
+print("users:")
+print("  acme_admin / Passw0rd!")
+print("  globex_admin / Passw0rd!")
+print("  acme_staff / Passw0rd!")
 '@
 ```
 
-## 5. Hosts File
-Ensure `C:\Windows\System32\drivers\etc\hosts` includes:
-
-```text
-127.0.0.1 acme.localhost
-127.0.0.1 globex.localhost
-```
-
-## 6. Start App
-Before starting the web app, make sure the browser-facing API base uses `localhost`:
-
-```powershell
-Set-Content apps\web\.env.local "NEXT_PUBLIC_API_URL=http://localhost:8000"
-```
-
+## 5. Start App
 ```powershell
 npm run dev
 ```
 
-## 7. Quick Validation
+## 6. Quick Validation
+Health check:
+
 ```powershell
-Invoke-WebRequest http://localhost:8000/api/health/ -Headers @{ Host = "localhost:8000" } | Select-Object -Expand Content
-Invoke-WebRequest http://localhost:8000/api/health/ -Headers @{ Host = "acme.localhost:8000" } | Select-Object -Expand Content
+Invoke-WebRequest http://localhost:8000/api/health/ | Select-Object -Expand Content
 ```
 
-Expected:
-- localhost -> `organization: null`
-- acme subdomain -> `organization: "acme"`
+Example org-scoped call (replace placeholders):
 
-## 8. Local Login Note
-If login succeeds and then immediately bounces back to `/login`, the usual cause is a host mismatch between `localhost` and `127.0.0.1`.
-
-Use:
-
-```text
-Frontend: http://localhost:3000
-API:      http://localhost:8000
+```powershell
+Invoke-WebRequest "http://localhost:8000/api/orgs/<ORG_ID>/inventory/stock/" `
+  -Headers @{ Authorization = "Bearer <ACCESS_TOKEN>"; "X-BRANCH-ID" = "<BRANCH_ID>" } `
+  | Select-Object -Expand Content
 ```
 
-Do not set `NEXT_PUBLIC_API_URL` to `http://127.0.0.1:8000` for browser-based local dev.
+## Notes
+- Subdomain hosts entries are not required for tenancy in the current backend architecture.
+- Use `localhost` consistently for browser/API local dev to avoid cookie/CSRF host mismatch issues.
