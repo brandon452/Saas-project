@@ -64,8 +64,9 @@ Add to `C:\Windows\System32\drivers\etc\hosts`:
 ```
 
 ## Tenancy Model
-- Organization is resolved from request host subdomain in Django middleware.
-- Middleware sets `request.org` and stores org in a thread-safe `contextvar`.
+- Organization is resolved from `/api/orgs/{org_id}/...` URL kwargs in org-scoped views/mixins.
+- `X-BRANCH-ID` is parsed by middleware and attached as `request.branch` when possible.
+- Branch/org/role enforcement happens in scoped view logic (for example `OrgScopedViewSetMixin` + `BranchScopedMixin`), not at header-parse time.
 - All API viewsets/services must call `.for_org(request.org)` explicitly.
 - Manager auto-scope is defense in depth only.
 - If a tenant queryset is accessed during request handling without org context, runtime error is raised.

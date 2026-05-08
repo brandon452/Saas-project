@@ -1,4 +1,5 @@
 from drf_spectacular.utils import extend_schema, extend_schema_view
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import viewsets
@@ -6,7 +7,7 @@ from rest_framework.filters import OrderingFilter
 from rest_framework.views import APIView
 
 from tenancy.mixins import BranchScopedMixin, OrgScopedViewSetMixin
-from tenancy.permissions import IsOrgOperationalUser, RolePolicyMixin
+from tenancy.permissions import IsOrgMemberOrParent, IsOrgOperationalUser, RolePolicyMixin, get_parent_membership
 from tenancy.models import Organization
 
 from .models import Branch
@@ -53,16 +54,28 @@ class NetworkBranchView(APIView):
     Returns all branches from all active organizations in the parent
     company network. No exclusions. No pagination. Read-only.
 
-    IsOrgOperationalUser allows all authenticated users on GET.
-
-    org_id is used only for access control context; the returned branch
-    set is global across the parent company network.
+    org_id is resolved to request.org in initial() and used for access control.
+    Returned branches are restricted to active organizations in the same
+    parent company as request.org.
     """
 
-    permission_classes = [IsAuthenticated, IsOrgOperationalUser]
+    permission_classes = [IsAuthenticated, IsOrgMemberOrParent, IsOrgOperationalUser]
+
+    def initial(self, request, *args, **kwargs):
+        org_id = self.kwargs.get("org_id")
+        try:
+            request.org = Organization.objects.get(pk=org_id, is_active=True)
+        except Organization.DoesNotExist:
+            raise NotFound("Organization not found.")
+        parent_membership = get_parent_membership(request)
+        request.parent_role = parent_membership.role if parent_membership else None
+        super().initial(request, *args, **kwargs)
 
     def get(self, request, org_id=None, *args, **kwargs):
-        active_org_ids = Organization.objects.filter(is_active=True).values_list("pk", flat=True)
+        active_org_ids = Organization.objects.filter(
+            parent_company=request.org.parent_company,
+            is_active=True,
+        ).values_list("pk", flat=True)
         branches = (
             Branch.objects.filter(organization__in=active_org_ids)
             .select_related("organization")
