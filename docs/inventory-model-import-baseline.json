@@ -1,0 +1,28 @@
+{
+  "baseline_count": 23,
+  "baseline_paths": [
+    "apps/api/audit/tests/test_audit_events.py",
+    "apps/api/auth/tests/test_cookie_auth.py",
+    "apps/api/branch_transfers/serializers.py",
+    "apps/api/branch_transfers/tests/test_branch_transfers.py",
+    "apps/api/branch_transfers/tests/test_transfer_idempotency.py",
+    "apps/api/exports/tests/test_csv_exports.py",
+    "apps/api/goods_receipts/serializers.py",
+    "apps/api/goods_receipts/tests/test_goods_receipts.py",
+    "apps/api/purchase_orders/serializers.py",
+    "apps/api/purchase_orders/tests/test_purchase_orders.py",
+    "apps/api/quick_sales/serializers.py",
+    "apps/api/quick_sales/tests/test_quick_sale_idempotency.py",
+    "apps/api/quick_sales/tests/test_quick_sales.py",
+    "apps/api/reports/queries.py",
+    "apps/api/reports/tests/test_purchase_cost_trend.py",
+    "apps/api/reports/tests/test_stock_valuation.py",
+    "apps/api/reports/views.py",
+    "apps/api/suppliers/models.py",
+    "apps/api/suppliers/serializers.py",
+    "apps/api/tenancy/tests/test_branch_scoping.py",
+    "apps/api/tenancy/tests/test_org_resolution.py",
+    "apps/api/tenancy/tests/test_parent_access.py",
+    "apps/api/tenancy/tests/test_permissions.py"
+  ]
+}

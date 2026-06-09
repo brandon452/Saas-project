@@ -57,6 +57,9 @@ jobs:
       - name: Install Backend Dependencies
         run: python -m pip install -r apps/api/requirements.txt
 
+      - name: Validate Modularity Policy
+        run: python scripts/validate_modularity_policy.py
+
       - name: Verify Migrations Are Committed
         run: python apps/api/manage.py makemigrations --check --dry-run
 
@@ -65,6 +68,18 @@ jobs:
 
       - name: Run Backend Tests
         run: python apps/api/manage.py test -v 2
+
+      - name: Run Architecture Guards
+        run: python apps/api/manage.py test config.tests.test_architecture_guards config.tests.test_facades -v 2
+
+      - name: Run Export Benchmark Promotion
+        run: python scripts/check_export_benchmarks.py --fixture docs/benchmarks/export-benchmark-fixture.json --output benchmark-results/export-benchmark-results.json
+
+      - name: Upload Export Benchmark Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: export-benchmark-results
+          path: benchmark-results/export-benchmark-results.json
 
   backend-prod-smoke:
     name: Backend Production Smoke Checks

@@ -1,0 +1,42 @@
+{
+  "fixture_version": 1,
+  "threshold_unit": "ms",
+  "promotion_logic": "all endpoint samples must be less than or equal to threshold_ms",
+  "endpoints": [
+    {
+      "endpoint_key": "purchase_orders",
+      "sample_ms": 140,
+      "threshold_ms": 250
+    },
+    {
+      "endpoint_key": "goods_receipts",
+      "sample_ms": 150,
+      "threshold_ms": 250
+    },
+    {
+      "endpoint_key": "branch_transfers",
+      "sample_ms": 145,
+      "threshold_ms": 250
+    },
+    {
+      "endpoint_key": "suppliers",
+      "sample_ms": 80,
+      "threshold_ms": 200
+    },
+    {
+      "endpoint_key": "stock_valuation",
+      "sample_ms": 220,
+      "threshold_ms": 400
+    },
+    {
+      "endpoint_key": "inventory_aging",
+      "sample_ms": 230,
+      "threshold_ms": 400
+    },
+    {
+      "endpoint_key": "slow_dead_stock",
+      "sample_ms": 240,
+      "threshold_ms": 400
+    }
+  ]
+}

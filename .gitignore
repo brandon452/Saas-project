@@ -8,6 +8,7 @@ apps/web/.next/
 apps/web/out/
 apps/web/tsconfig.tsbuildinfo
 apps/api/staticfiles/
+benchmark-results/
 
 # Python virtualenv and cache
 apps/api/.venv/
