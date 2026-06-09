@@ -14,6 +14,7 @@ import { ConfirmDialog } from "@/components/shared/ConfirmDialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { getApiErrorMessage } from "@/lib/api"
 import {
   useApproveTransfer,
   useCancelTransfer,
@@ -167,7 +168,7 @@ export default function BranchTransferDetailPage() {
       setReceiveOpen(false)
       await transferQuery.refetch()
     } catch (error) {
-      setActionError(error instanceof Error && error.message.includes("403") ? "You do not have permission to receive this transfer." : "Failed to receive the transfer.")
+      setActionError(getApiErrorMessage(error, "Failed to receive the transfer."))
     }
   }
 

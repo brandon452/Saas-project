@@ -186,6 +186,11 @@ def receive_transfer(transfer, lines_data, performed_by, receive_notes="", idemp
             )
 
         if quantity_received > 0:
+            if line.dispatched_unit_cost is None:
+                raise ValidationError(
+                    f"Transfer line {line.pk} is missing dispatch cost snapshot. "
+                    "Redispatch or backfill dispatched_unit_cost before receiving."
+                )
             recipient_item = get_or_create_recipient_item(
                 master_item=line.item.master_item,
                 to_organization=transfer.to_organization,
