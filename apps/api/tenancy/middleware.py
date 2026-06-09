@@ -1,4 +1,4 @@
-from branches.models import Branch
+from branches.api import Branch, get_branch_any_org_or_none
 
 
 class BranchContextMiddleware:
@@ -16,7 +16,7 @@ class BranchContextMiddleware:
 
         if branch_id:
             try:
-                request.branch = Branch.objects.select_related("organization").get(pk=branch_id)
+                request.branch = get_branch_any_org_or_none(branch_id=branch_id)
             except (Branch.DoesNotExist, ValueError):
                 request.branch = None
 

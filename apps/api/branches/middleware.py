@@ -2,7 +2,7 @@
 
 from django.http import JsonResponse
 
-from .models import Branch
+from .api import get_branch_any_org_or_none, get_branch_for_org_or_none
 
 
 class BranchMiddleware:
@@ -24,12 +24,12 @@ class BranchMiddleware:
         except ValueError:
             return JsonResponse({"detail": "Branch not found"}, status=400)
 
-        branch = Branch.objects.for_org(request.org).filter(id=branch_uuid).first()
+        branch = get_branch_for_org_or_none(branch_id=branch_uuid, organization=request.org)
         if branch:
             request.branch = branch
             return self.get_response(request)
 
-        branch_any_org = Branch.all_objects.filter(id=branch_uuid).first()
+        branch_any_org = get_branch_any_org_or_none(branch_id=branch_uuid)
         if branch_any_org:
             return JsonResponse({"detail": "Branch does not belong to organization"}, status=403)
 

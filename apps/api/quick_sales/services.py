@@ -6,9 +6,15 @@ from django.db import transaction
 from django.utils import timezone
 
 from inventory import signals as inventory_signals
-from inventory.api import assert_inventory_period_open, record_stock_movement
-from inventory.lot_services import allocate_lots_fefo_fifo, deplete_lot_balance
-from inventory.models import StockLedger, StockMovementLotAllocation
+from inventory.api import (
+    allocate_lots_fefo_fifo,
+    assert_inventory_period_open,
+    create_stock_movement_lot_allocation,
+    deplete_lot_balance,
+    MOVEMENT_ADJUSTMENT,
+    MOVEMENT_ISSUE,
+    record_stock_movement,
+)
 
 from .models import QuickSale, QuickSaleLine
 
@@ -57,7 +63,7 @@ def create_quick_sale(
             branch=branch,
             item=item,
             quantity=-qty,
-            movement_type=StockLedger.MOVEMENT_ISSUE,
+            movement_type=MOVEMENT_ISSUE,
             performed_by=performed_by,
             reference_type="QUICK_SALE",
             reference_id=str(sale.id),
@@ -86,7 +92,7 @@ def create_quick_sale(
                 )
             for lot, alloc_qty in lot_allocations:
                 deplete_lot_balance(lot, alloc_qty)
-                StockMovementLotAllocation.objects.create(
+                create_stock_movement_lot_allocation(
                     ledger=ledger,
                     lot=lot,
                     quantity=alloc_qty,
@@ -120,7 +126,7 @@ def void_quick_sale(org, quick_sale, *, performed_by=None):
             branch=quick_sale.branch,
             item=line.item,
             quantity=line.quantity,
-            movement_type=StockLedger.MOVEMENT_ADJUSTMENT,
+            movement_type=MOVEMENT_ADJUSTMENT,
             performed_by=performed_by,
             reference_type="QUICK_SALE_VOID",
             reference_id=str(quick_sale.id),

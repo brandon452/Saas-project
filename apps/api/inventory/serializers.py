@@ -1,9 +1,8 @@
 from django.contrib.auth import get_user_model
-from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
 from rest_framework import serializers
 
-from branches.models import Branch
+from branches.api import Branch, get_branch_for_org
 
 from .models import (
     BranchItem,
@@ -166,7 +165,7 @@ class BranchItemBulkActivateSerializer(serializers.Serializer):
     def validate_branch(self, value):
         request = self.context["request"]
         try:
-            return Branch.objects.get(pk=value, organization=request.org)
+            return get_branch_for_org(branch_id=value, organization=request.org)
         except Branch.DoesNotExist:
             raise serializers.ValidationError(
                 "Branch not found or does not belong to this organisation."
@@ -202,7 +201,7 @@ class BranchItemBulkDeactivateSerializer(serializers.Serializer):
     def validate_branch(self, value):
         request = self.context["request"]
         try:
-            return Branch.objects.get(pk=value, organization=request.org)
+            return get_branch_for_org(branch_id=value, organization=request.org)
         except Branch.DoesNotExist:
             raise serializers.ValidationError(
                 "Branch not found or does not belong to this organisation."
@@ -220,7 +219,6 @@ class BranchItemBulkDeactivateSerializer(serializers.Serializer):
                 is_active=True,
             )
         )
-        found_active_ids = {item.id for item in items}
         # Validate all submitted IDs exist and belong to this org (active or not)
         all_items_in_org = set(
             BranchItem.objects.filter(
@@ -697,7 +695,7 @@ class StockTakeGenerateCycleSerializer(serializers.Serializer):
     def validate_branch_id(self, value):
         request = self.context["request"]
         try:
-            branch = Branch.objects.get(pk=value, organization=request.org)
+            branch = get_branch_for_org(branch_id=value, organization=request.org)
         except Branch.DoesNotExist:
             raise serializers.ValidationError(
                 "Branch not found or does not belong to this organisation."

@@ -10,7 +10,7 @@ from tenancy.mixins import BranchScopedMixin, OrgScopedViewSetMixin
 from tenancy.permissions import IsOrgMemberOrParent, IsOrgOperationalUser, RolePolicyMixin, get_parent_membership
 from tenancy.models import Organization
 
-from .models import Branch
+from .api import Branch, branches_for_org, network_branches_for_org
 from .serializers import BranchSerializer, NetworkBranchSerializer
 
 
@@ -32,7 +32,7 @@ class BranchViewSet(RolePolicyMixin, OrgScopedViewSetMixin, BranchScopedMixin, v
     ordering = ["name"]
 
     def get_queryset(self):
-        qs = Branch.objects.for_org(self.request.org)
+        qs = branches_for_org(self.request.org)
 
         membership = getattr(self.request, "org_membership", None)
         if self.action in ("retrieve", "update", "partial_update", "destroy"):
@@ -72,15 +72,7 @@ class NetworkBranchView(APIView):
         super().initial(request, *args, **kwargs)
 
     def get(self, request, org_id=None, *args, **kwargs):
-        active_org_ids = Organization.objects.filter(
-            parent_company=request.org.parent_company,
-            is_active=True,
-        ).values_list("pk", flat=True)
-        branches = (
-            Branch.objects.filter(organization__in=active_org_ids)
-            .select_related("organization")
-            .order_by("organization__name", "name")
-        )
+        branches = network_branches_for_org(request.org)
 
         serializer = NetworkBranchSerializer(branches, many=True)
         return Response(serializer.data)

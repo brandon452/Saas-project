@@ -4,7 +4,7 @@ from uuid import UUID
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
-from django.db.models import BooleanField, Case, CharField, Count, F, IntegerField, OuterRef, Prefetch, Q, Subquery, Value, When
+from django.db.models import Count, F, Prefetch, Q
 from django_ratelimit.core import is_ratelimited
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework.decorators import action
@@ -16,7 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from branches.models import Branch
+from branches.api import Branch, get_branch_for_org
 from audit.services import log_audit_event
 from tenancy.mixins import BranchScopedMixin, OrgScopedViewSetMixin
 from tenancy.models import Organization
@@ -366,7 +366,7 @@ class BranchItemCatalogView(APIView):
             raise DRFValidationError({"branch": "This field is required."})
 
         try:
-            branch = Branch.objects.get(pk=branch_id, organization=request.org)
+            branch = get_branch_for_org(branch_id=branch_id, organization=request.org)
         except Branch.DoesNotExist:
             raise DRFValidationError(
                 {"branch": "Branch not found or does not belong to this organisation."}

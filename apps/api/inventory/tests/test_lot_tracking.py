@@ -20,14 +20,11 @@ from django.test import TestCase, TransactionTestCase, override_settings
 
 from branches.models import Branch
 from goods_receipts.models import GoodsReceipt, GoodsReceiptLine
-from goods_receipts.services import post_direct_receipt, post_po_receipt
+from goods_receipts.services import post_direct_receipt
 from branch_transfers.models import BranchTransfer, BranchTransferLine
 from branch_transfers.services import dispatch_transfer, receive_transfer
 from inventory.lot_services import (
     allocate_lots_fefo_fifo,
-    deplete_lot_balance,
-    get_or_create_lot,
-    increment_lot_balance,
     validate_allocations_sum,
     check_lot_override_permission,
 )
@@ -43,7 +40,6 @@ from inventory.models import (
     StockMovementLotAllocation,
     StockOnHand,
     StockTake,
-    StockTakeLine,
     StockTakeLineLotAllocation,
 )
 from inventory.services import (
@@ -118,10 +114,10 @@ class FEFOOrderingTest(TestCase):
     def test_earlier_expiry_depleted_first(self):
         """FEFO: lot with earlier expiry_date should be allocated first."""
         from datetime import date
-        lot_a = _make_lot(self.org, self.branch, self.item, "LOT-A",
-                          available_qty=Decimal("5"), expiry_date=date(2025, 6, 1))
-        lot_b = _make_lot(self.org, self.branch, self.item, "LOT-B",
-                          available_qty=Decimal("5"), expiry_date=date(2025, 12, 31))
+        _make_lot(self.org, self.branch, self.item, "LOT-A",
+                  available_qty=Decimal("5"), expiry_date=date(2025, 6, 1))
+        _make_lot(self.org, self.branch, self.item, "LOT-B",
+                  available_qty=Decimal("5"), expiry_date=date(2025, 12, 31))
 
         allocs = allocate_lots_fefo_fifo(self.org, self.branch, self.item, Decimal("6"))
         # Should take all 5 from LOT-A, then 1 from LOT-B
@@ -134,10 +130,10 @@ class FEFOOrderingTest(TestCase):
     def test_null_expiry_sorted_last(self):
         """Lots without expiry_date come after lots with an expiry_date."""
         from datetime import date
-        lot_no_expiry = _make_lot(self.org, self.branch, self.item, "LOT-NOEXP",
-                                  available_qty=Decimal("10"))
-        lot_with_expiry = _make_lot(self.org, self.branch, self.item, "LOT-EXP",
-                                    available_qty=Decimal("10"), expiry_date=date(2025, 9, 1))
+        _make_lot(self.org, self.branch, self.item, "LOT-NOEXP",
+                  available_qty=Decimal("10"))
+        _make_lot(self.org, self.branch, self.item, "LOT-EXP",
+                  available_qty=Decimal("10"), expiry_date=date(2025, 9, 1))
 
         allocs = allocate_lots_fefo_fifo(self.org, self.branch, self.item, Decimal("5"))
         # Should prefer lot_with_expiry first
@@ -167,10 +163,10 @@ class FIFOOrderingTest(TestCase):
         t2 = datetime(2024, 6, 1, 0, 0, 0, tzinfo=dt_tz.utc)
 
         # Create in reverse order so DB insertion order doesn't help
-        lot_new = _make_lot(self.org, self.branch, self.item, "LOT-NEW",
-                            available_qty=Decimal("10"), received_at=t2)
-        lot_old = _make_lot(self.org, self.branch, self.item, "LOT-OLD",
-                            available_qty=Decimal("10"), received_at=t1)
+        _make_lot(self.org, self.branch, self.item, "LOT-NEW",
+                  available_qty=Decimal("10"), received_at=t2)
+        _make_lot(self.org, self.branch, self.item, "LOT-OLD",
+                  available_qty=Decimal("10"), received_at=t1)
 
         allocs = allocate_lots_fefo_fifo(self.org, self.branch, self.item, Decimal("5"))
         self.assertEqual(allocs[0][0].lot_code, "LOT-OLD")

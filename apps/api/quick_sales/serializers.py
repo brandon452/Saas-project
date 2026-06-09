@@ -3,7 +3,7 @@ from decimal import Decimal
 from rest_framework import serializers
 from django.utils import timezone
 
-from branches.models import Branch
+from branches.api import Branch, branches_for_org
 from inventory.models import BranchItem, OrgItem
 from inventory.serializers import (
     BranchSummarySerializer,
@@ -34,7 +34,7 @@ class QuickSaleCreateSerializer(serializers.Serializer):
         request = self.context.get("request")
         if request and hasattr(request, "org"):
             org = request.org
-            self.fields["branch"].queryset = Branch.objects.filter(organization=org)
+            self.fields["branch"].queryset = branches_for_org(org)
             item_qs = OrgItem.objects.for_org(org).filter(is_active=True)
             self.fields["lines"].child.fields["item"].queryset = item_qs
 

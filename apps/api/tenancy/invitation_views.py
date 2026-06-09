@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from auth.models import PasswordSetToken
-from branches.models import Branch
+from branches.api import Branch, get_branch_for_org
 from django.conf import settings
 from django.utils.text import slugify
 
@@ -126,7 +126,7 @@ class CreateUserView(APIView):
             if not assigned_branch_id:
                 raise ValidationError({"assigned_branch": "STAFF must have an assigned branch."})
             try:
-                assigned_branch = Branch.objects.get(pk=assigned_branch_id, organization=request.org)
+                assigned_branch = get_branch_for_org(branch_id=assigned_branch_id, organization=request.org)
             except Branch.DoesNotExist:
                 raise ValidationError({"assigned_branch": "Branch not found in this organization."})
 

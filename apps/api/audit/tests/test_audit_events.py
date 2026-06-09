@@ -12,7 +12,7 @@ from rest_framework.test import APITestCase
 
 from audit.models import AuditEvent
 from branches.models import Branch
-from inventory.models import BranchItem, InventoryClosePeriod, MasterItem, OrgItem, StockTake
+from inventory.models import BranchItem, InventoryClosePeriod, MasterItem, OrgItem
 from suppliers.models import Supplier
 from tenancy.models import Organization, OrganizationMember, ParentCompanyMember
 
@@ -221,7 +221,6 @@ class AuditEventsTests(APITestCase):
         )
         self.assertEqual(create_take.status_code, 201)
         stock_take_id = create_take.data["id"]
-        stock_take = StockTake.objects.get(pk=stock_take_id)
 
         start_resp = self.client.post(f"/api/orgs/{self.org.id}/stock-takes/{stock_take_id}/start/")
         self.assertEqual(start_resp.status_code, 200)

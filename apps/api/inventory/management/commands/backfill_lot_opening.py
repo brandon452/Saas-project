@@ -16,7 +16,6 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from inventory.models import InventoryLotBalance, OrgItem, StockOnHand
-from tenancy.models import Organization
 
 
 class Command(BaseCommand):

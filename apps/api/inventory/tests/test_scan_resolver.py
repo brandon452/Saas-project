@@ -1,4 +1,3 @@
-from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
@@ -8,12 +7,10 @@ from inventory.models import (
     BranchItem,
     MasterItem,
     OrgItem,
-    StockLedger,
-    StockOnHand,
     StockTake,
     StockTakeLine,
 )
-from inventory.services import record_stock_movement, start_stock_take
+from inventory.services import start_stock_take
 from tenancy.models import Organization, OrganizationMember
 
 
@@ -101,7 +98,7 @@ class ScanResolveViewTests(APITestCase):
         self.assertEqual(resp.json()["outcome"], "not_found")
 
     def test_sku_from_another_orgs_parent_returns_not_found(self):
-        other_master = MasterItem.objects.create(
+        MasterItem.objects.create(
             name="Other Widget",
             sku="OTHER-SKU",
             parent_company=self.other_org.parent_company,

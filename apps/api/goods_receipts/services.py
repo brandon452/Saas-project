@@ -5,9 +5,16 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from inventory import signals as inventory_signals
-from inventory.api import assert_inventory_period_open, record_stock_movement
-from inventory.lot_services import get_or_create_lot, increment_lot_balance, validate_allocations_sum
-from inventory.models import GoodsReceiptLineLotAllocation, StockLedger, StockMovementLotAllocation
+from inventory.api import (
+    assert_inventory_period_open,
+    create_goods_receipt_line_lot_allocation,
+    create_stock_movement_lot_allocation,
+    get_or_create_lot,
+    increment_lot_balance,
+    MOVEMENT_RECEIPT,
+    record_stock_movement,
+    validate_allocations_sum,
+)
 from purchase_orders.models import PurchaseOrder, PurchaseOrderLine
 
 from .models import GoodsReceiptLine
@@ -102,7 +109,7 @@ def post_po_receipt(receipt, lines_data, performed_by, organization):
             branch=branch,
             item=po_line.item,
             quantity=quantity_received,
-            movement_type=StockLedger.MOVEMENT_RECEIPT,
+            movement_type=MOVEMENT_RECEIPT,
             unit_cost=unit_cost,
             performed_by=performed_by,
         )
@@ -194,7 +201,7 @@ def post_direct_receipt(receipt, lines_data, performed_by, organization):
             branch=branch,
             item=item,
             quantity=quantity_received,
-            movement_type=StockLedger.MOVEMENT_RECEIPT,
+            movement_type=MOVEMENT_RECEIPT,
             unit_cost=unit_cost,
             performed_by=performed_by,
         )
@@ -261,12 +268,12 @@ def _apply_receipt_lot_allocations(*, org, branch, org_item, gr_line, ledger, lo
         )
         increment_lot_balance(lot, qty)
 
-        GoodsReceiptLineLotAllocation.objects.create(
+        create_goods_receipt_line_lot_allocation(
             receipt_line=gr_line,
             lot=lot,
             quantity=qty,
         )
-        StockMovementLotAllocation.objects.create(
+        create_stock_movement_lot_allocation(
             ledger=ledger,
             lot=lot,
             quantity=qty,

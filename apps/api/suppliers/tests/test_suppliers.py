@@ -191,7 +191,6 @@ class SupplierCodeBackfillTests(TestCase):
         with transaction.atomic():
             self._simulate_backfill()
             # Simulate for globex too
-            import re
             for s in Supplier.objects.filter(organization=globex, code="").order_by("id"):
                 s.code = "SUP-0001"
                 s.save(update_fields=["code"])
@@ -531,7 +530,7 @@ class SupplierContactApiTests(SupplierTestBase):
         return path if path.endswith("/") else path + "/"
 
     def test_list_contacts_visible_to_all_roles(self):
-        contact = SupplierContact.objects.create(
+        SupplierContact.objects.create(
             supplier=self.active_supplier, full_name="Alice", is_active=True
         )
         for user in (self.owner, self.admin, self.staff):
@@ -659,7 +658,7 @@ class SupplierContactApiTests(SupplierTestBase):
 
     def test_contact_not_accessible_across_orgs(self):
         globex_supplier = Supplier.objects.create(organization=self.globex, display_name="Globex Co")
-        contact = SupplierContact.objects.create(supplier=globex_supplier, full_name="Cross Org")
+        SupplierContact.objects.create(supplier=globex_supplier, full_name="Cross Org")
         self._auth(self.owner)
         # Acme owner tries to access a contact on a Globex supplier via the acme URL
         r = self.client.get(

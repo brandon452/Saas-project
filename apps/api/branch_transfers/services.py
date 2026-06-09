@@ -7,57 +7,28 @@ from django.db import transaction
 from django.utils import timezone
 
 from inventory import signals as inventory_signals
-from inventory.api import assert_inventory_period_open, record_stock_movement
-from inventory.lot_services import (
+from inventory.api import (
     allocate_lots_fefo_fifo,
+    assert_inventory_period_open,
+    create_branch_transfer_dispatch_lot_allocation,
+    create_branch_transfer_receive_lot_allocation,
+    create_stock_movement_lot_allocation,
     deplete_lot_balance,
+    find_lot_balance_by_code,
+    get_dispatch_lot_allocations,
+    get_inventory_cost_state_for_update,
     get_or_create_lot,
+    get_or_create_recipient_branch_item,
+    get_or_create_recipient_item,
     increment_lot_balance,
-    validate_allocations_sum,
-)
-from inventory.models import (
-    BranchItem,
-    BranchTransferLineDispatchLotAllocation,
-    BranchTransferLineReceiveLotAllocation,
-    InventoryCostState,
-    InventoryLotBalance,
-    OrgItem,
-    StockLedger,
-    StockMovementLotAllocation,
+    MOVEMENT_ISSUE,
+    MOVEMENT_RECEIPT,
+    record_stock_movement,
 )
 
 from .models import BranchTransfer, BranchTransferLine
 
 logger = logging.getLogger(__name__)
-
-
-def _get_or_create_recipient_item(master_item, to_organization):
-    org_item, created = OrgItem.objects.get_or_create(
-        organization=to_organization,
-        master_item=master_item,
-        defaults={
-            "name": "",
-            "is_active": True,
-        },
-    )
-    if not created and not org_item.is_active:
-        org_item.is_active = True
-        org_item.save(update_fields=["is_active"])
-    return org_item
-
-
-def _get_or_create_recipient_branch_item(org_item, branch):
-    branch_item, created = BranchItem.objects.get_or_create(
-        org_item=org_item,
-        branch=branch,
-        defaults={
-            "is_active": True,
-        },
-    )
-    if not created and not branch_item.is_active:
-        branch_item.is_active = True
-        branch_item.save(update_fields=["is_active"])
-    return branch_item
 
 
 @transaction.atomic
@@ -88,13 +59,12 @@ def dispatch_transfer(transfer, performed_by, idempotency_key=None):
     for line in lines:
         sku = line.item.sku
         name = line.item.display_name
-        try:
-            cost_state = InventoryCostState.objects.select_for_update().get(
-                organization=transfer.organization,
-                branch=transfer.from_branch,
-                item=line.item,
-            )
-        except InventoryCostState.DoesNotExist:
+        cost_state = get_inventory_cost_state_for_update(
+            organization=transfer.organization,
+            branch=transfer.from_branch,
+            item=line.item,
+        )
+        if cost_state is None:
             raise ValidationError(
                 f"No cost state found for {sku} ({name}) in source branch. Post a receipt first."
             )
@@ -112,7 +82,7 @@ def dispatch_transfer(transfer, performed_by, idempotency_key=None):
                 item=line.item,
                 branch=transfer.from_branch,
                 quantity=-line.quantity_sent,
-                movement_type=StockLedger.MOVEMENT_ISSUE,
+                movement_type=MOVEMENT_ISSUE,
                 performed_by=performed_by,
                 idempotency_key=ikey,
             )
@@ -136,12 +106,12 @@ def dispatch_transfer(transfer, performed_by, idempotency_key=None):
                 )
             for lot, alloc_qty in lot_allocations:
                 deplete_lot_balance(lot, alloc_qty)
-                BranchTransferLineDispatchLotAllocation.objects.create(
+                create_branch_transfer_dispatch_lot_allocation(
                     transfer_line=line,
                     lot=lot,
                     quantity=alloc_qty,
                 )
-                StockMovementLotAllocation.objects.create(
+                create_stock_movement_lot_allocation(
                     ledger=ledger,
                     lot=lot,
                     quantity=alloc_qty,
@@ -216,11 +186,11 @@ def receive_transfer(transfer, lines_data, performed_by, receive_notes="", idemp
             )
 
         if quantity_received > 0:
-            recipient_item = _get_or_create_recipient_item(
+            recipient_item = get_or_create_recipient_item(
                 master_item=line.item.master_item,
                 to_organization=transfer.to_organization,
             )
-            _get_or_create_recipient_branch_item(
+            get_or_create_recipient_branch_item(
                 org_item=recipient_item,
                 branch=transfer.to_branch,
             )
@@ -230,7 +200,7 @@ def receive_transfer(transfer, lines_data, performed_by, receive_notes="", idemp
                 item=recipient_item,
                 branch=transfer.to_branch,
                 quantity=quantity_received,
-                movement_type=StockLedger.MOVEMENT_RECEIPT,
+                movement_type=MOVEMENT_RECEIPT,
                 unit_cost=line.dispatched_unit_cost,
                 is_transfer_receive=True,
                 performed_by=performed_by,
@@ -304,11 +274,7 @@ def _apply_receive_lot_allocations(
     If a destination lot with the same lot_code exists but has conflicting
     expiry_date / manufacture_date, raises ValidationError unless lot_override=True.
     """
-    dispatch_allocs = list(
-        BranchTransferLineDispatchLotAllocation.objects.filter(
-            transfer_line=line
-        ).select_related("lot")
-    )
+    dispatch_allocs = get_dispatch_lot_allocations(transfer_line=line)
 
     if not dispatch_allocs:
         logger.warning(
@@ -330,12 +296,12 @@ def _apply_receive_lot_allocations(
             continue
 
         # Try to find an existing lot at destination with same lot_code
-        existing_lot = InventoryLotBalance.objects.filter(
+        existing_lot = find_lot_balance_by_code(
             organization=transfer.to_organization,
             branch=transfer.to_branch,
             org_item=recipient_item,
             lot_code=source_lot.lot_code,
-        ).first()
+        )
 
         if existing_lot is not None:
             # Check for conflicting metadata
@@ -369,12 +335,12 @@ def _apply_receive_lot_allocations(
 
         increment_lot_balance(dest_lot, alloc_qty)
 
-        BranchTransferLineReceiveLotAllocation.objects.create(
+        create_branch_transfer_receive_lot_allocation(
             transfer_line=line,
             lot=dest_lot,
             quantity=alloc_qty,
         )
-        StockMovementLotAllocation.objects.create(
+        create_stock_movement_lot_allocation(
             ledger=ledger,
             lot=dest_lot,
             quantity=alloc_qty,
