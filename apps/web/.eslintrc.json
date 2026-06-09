@@ -1,1 +1,23 @@
-{"extends":["next/core-web-vitals"]}
+{
+  "extends": ["next/core-web-vitals"],
+  "plugins": ["import"],
+  "overrides": [
+    {
+      "files": ["components/**/*.{ts,tsx}"],
+      "rules": {
+        "import/no-restricted-paths": [
+          "error",
+          {
+            "zones": [
+              {
+                "target": "./components",
+                "from": "./app",
+                "message": "Shared components must not import Next app route modules."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
