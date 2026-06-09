@@ -11,11 +11,8 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from audit.services import log_audit_event
-from exports.audit import log_export_event
-from exports.config import get_csv_rate
-from exports.filenames import csv_filename
 from exports.rows.branch_transfers import HEADERS, to_row
-from exports.streaming import enforce_row_cap, stream_csv
+from exports.service import ExportConfig, ExportService
 from tenancy.mixins import OrgScopedViewSetMixin
 from tenancy.permissions import (
     IsOrgOperationalUser,
@@ -176,24 +173,25 @@ class BranchTransferViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet
 
     @action(detail=False, methods=["get"], url_path="export/csv")
     def export_csv(self, request, *args, **kwargs):
-        if is_ratelimited(request, group="transfer_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
-            return Response(
-                {"detail": "Too many export requests. Please wait before exporting again."},
-                status=status.HTTP_429_TOO_MANY_REQUESTS,
-            )
         qs = self.get_queryset().select_related(
             "from_branch", "to_branch", "organization", "to_organization"
+        ).order_by("-created_at", "pk")
+        config = ExportConfig(
+            headers=HEADERS,
+            filename_prefix="branch-transfers",
+            rate_group="transfer_export_csv",
+            audit_resource="branch_transfer",
+            filters_provider=lambda req: dict(req.query_params),
+            require_ordering=True,
         )
-        row_count = enforce_row_cap(qs)
-        log_export_event(
+        return ExportService.export_stream(
+            request=request,
+            queryset=qs,
+            config=config,
+            row_iter=(to_row(t) for t in qs.iterator(chunk_size=500)),
             organization=request.org,
-            actor_user=request.user,
-            resource="branch_transfer",
-            format="csv",
-            filters=dict(request.query_params),
-            row_count=row_count,
+            rate_limiter=is_ratelimited,
         )
-        return stream_csv(HEADERS, (to_row(t) for t in qs.iterator(chunk_size=500)), csv_filename("branch-transfers"))
 
     @action(detail=True, methods=["post"], url_path="approve")
     @transaction.atomic

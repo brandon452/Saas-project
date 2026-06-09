@@ -33,12 +33,12 @@ def stream_csv(headers, row_iter, filename):
     return response
 
 
-def enforce_row_cap(queryset):
+def enforce_row_cap(queryset, max_rows=None):
     """
     Raise a friendly ValidationError if the queryset exceeds EXPORT_MAX_ROWS.
     Returns the count for use in audit logging.
     """
-    max_rows = get_max_rows()
+    max_rows = get_max_rows() if max_rows is None else max_rows
     total = queryset.count()
     if total > max_rows:
         raise ValidationError(

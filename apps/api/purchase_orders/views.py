@@ -15,15 +15,12 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from audit.services import log_audit_event
 from exports.audit import log_export_event
-from exports.config import get_csv_rate, get_pdf_rate
-from exports.filenames import csv_filename, pdf_filename
+from exports.config import get_pdf_rate
+from exports.filenames import pdf_filename
 from exports.rows.purchase_orders import HEADERS, to_row
-from exports.streaming import enforce_row_cap, stream_csv
+from exports.service import ExportConfig, ExportService
 from tenancy.mixins import OrgScopedViewSetMixin
 from tenancy.permissions import IsOrgOperationalUser, RolePolicyMixin, get_org_membership
-
-logger = logging.getLogger(__name__)
-
 from .models import PurchaseOrder
 from .serializers import (
     PurchaseOrderCreateSerializer,
@@ -33,6 +30,8 @@ from .serializers import (
     PurchaseOrderUpdateSerializer,
 )
 from .services import generate_po_number, sync_purchase_order_next_number
+
+logger = logging.getLogger(__name__)
 
 
 def _po_line_warnings(po, line):
@@ -300,22 +299,23 @@ class PurchaseOrderViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet)
 
     @action(detail=False, methods=["get"], url_path="export/csv")
     def export_csv(self, request, *args, **kwargs):
-        if is_ratelimited(request, group="po_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
-            return Response(
-                {"detail": "Too many export requests. Please wait before exporting again."},
-                status=status.HTTP_429_TOO_MANY_REQUESTS,
-            )
-        qs = self.get_queryset().select_related("supplier", "branch")
-        row_count = enforce_row_cap(qs)
-        log_export_event(
-            organization=request.org,
-            actor_user=request.user,
-            resource="purchase_order",
-            format="csv",
-            filters=dict(request.query_params),
-            row_count=row_count,
+        qs = self.get_queryset().select_related("supplier", "branch").order_by("-created_at", "pk")
+        config = ExportConfig(
+            headers=HEADERS,
+            filename_prefix="purchase-orders",
+            rate_group="po_export_csv",
+            audit_resource="purchase_order",
+            filters_provider=lambda req: dict(req.query_params),
+            require_ordering=True,
         )
-        return stream_csv(HEADERS, (to_row(po) for po in qs.iterator(chunk_size=500)), csv_filename("purchase-orders"))
+        return ExportService.export_stream(
+            request=request,
+            queryset=qs,
+            config=config,
+            row_iter=(to_row(po) for po in qs.iterator(chunk_size=500)),
+            organization=request.org,
+            rate_limiter=is_ratelimited,
+        )
 
     @action(detail=True, methods=["get"], url_path="export/pdf")
     def export_pdf(self, request, org_id=None, pk=None):

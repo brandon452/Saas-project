@@ -8,11 +8,14 @@ Tests for CSV list export endpoints:
 """
 import csv
 import io
+from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.http import HttpResponse
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from audit.models import AuditEvent
@@ -20,14 +23,12 @@ from branches.models import Branch
 from goods_receipts.models import GoodsReceipt
 from inventory.models import (
     BranchItem,
-    InventoryClosePeriod,
-    InventoryCloseSnapshot,
     InventoryCostState,
     MasterItem,
     OrgItem,
     StockOnHand,
 )
-from purchase_orders.models import PurchaseOrder, PurchaseOrderLine
+from purchase_orders.models import PurchaseOrder
 from suppliers.models import Supplier
 from tenancy.models import Organization, OrganizationMember, ParentCompanyMember
 
@@ -203,6 +204,39 @@ class PurchaseOrderExportTests(ExportTestMixin, APITestCase):
         response = self.client.get(self._url())
         self.assertEqual(response.status_code, 200)
 
+    @override_settings(EXPORT_CSV_SERVICE_ENABLED=True, EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={})
+    def test_global_enable_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("purchase_orders.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=False,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"purchase_orders": True},
+    )
+    def test_explicit_purchase_order_override_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("purchase_orders.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=True,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"purchase_orders": False},
+    )
+    def test_explicit_purchase_order_false_override_still_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("purchase_orders.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # Goods Receipt CSV exports
@@ -290,6 +324,39 @@ class GoodsReceiptExportTests(ExportTestMixin, APITestCase):
         self.assertTrue(
             AuditEvent.objects.filter(organization=self.org, event_type="goods_receipt.exported").exists()
         )
+
+    @override_settings(EXPORT_CSV_SERVICE_ENABLED=True, EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={})
+    def test_global_enable_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("goods_receipts.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=False,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"goods_receipts": True},
+    )
+    def test_explicit_goods_receipts_override_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("goods_receipts.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=True,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"goods_receipts": False},
+    )
+    def test_explicit_goods_receipts_false_override_still_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("goods_receipts.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +448,39 @@ class BranchTransferExportTests(ExportTestMixin, APITestCase):
             AuditEvent.objects.filter(organization=self.org, event_type="branch_transfer.exported").exists()
         )
 
+    @override_settings(EXPORT_CSV_SERVICE_ENABLED=True, EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={})
+    def test_global_enable_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("branch_transfers.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=False,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"branch_transfers": True},
+    )
+    def test_explicit_branch_transfers_override_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("branch_transfers.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=True,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"branch_transfers": False},
+    )
+    def test_explicit_branch_transfers_false_override_still_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("branch_transfers.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # Supplier CSV exports
@@ -458,6 +558,39 @@ class SupplierExportTests(ExportTestMixin, APITestCase):
         self.assertTrue(
             AuditEvent.objects.filter(organization=self.org, event_type="supplier.exported").exists()
         )
+
+    @override_settings(EXPORT_CSV_SERVICE_ENABLED=True, EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={})
+    def test_global_enable_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("suppliers.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=False,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"suppliers": True},
+    )
+    def test_explicit_suppliers_override_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("suppliers.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=True,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"suppliers": False},
+    )
+    def test_explicit_suppliers_false_override_still_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("suppliers.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -579,6 +712,176 @@ class StockValuationExportTests(ExportTestMixin, APITestCase):
         response = self.client.get(self._url())
         self.assertEqual(response.status_code, 200)
 
+    @override_settings(EXPORT_CSV_SERVICE_ENABLED=True, EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={})
+    def test_global_enable_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("reports.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=False,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"stock_valuation": True},
+    )
+    def test_explicit_stock_valuation_override_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("reports.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=True,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"stock_valuation": False},
+    )
+    def test_explicit_stock_valuation_false_override_still_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("reports.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Inventory Aging CSV exports
+# ---------------------------------------------------------------------------
+
+@override_settings(**RATELIMIT_OFF)
+class InventoryAgingExportTests(ExportTestMixin, APITestCase):
+    def setUp(self):
+        self._setup_users_and_orgs()
+        master = MasterItem.objects.create(name="Aging Widget", sku="AGE-001")
+        self.item = OrgItem.objects.for_org(self.org).create(
+            organization=self.org, master_item=master, name="Aging Widget"
+        )
+        BranchItem.objects.create(branch=self.branch, org_item=self.item, is_active=True)
+        StockOnHand.objects.create(
+            organization=self.org, branch=self.branch, item=self.item, quantity=10
+        )
+        InventoryCostState.objects.create(
+            organization=self.org,
+            branch=self.branch,
+            item=self.item,
+            latest_unit_cost=Decimal("5.00"),
+            average_unit_cost=Decimal("4.50"),
+            last_receipt_at=timezone.now() - timedelta(days=30),
+        )
+
+    def _url(self):
+        return f"/api/orgs/{self.org.id}/reports/inventory-aging/export/csv/"
+
+    def test_owner_can_export(self):
+        self._auth(self.owner)
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("inventory-aging-", response["Content-Disposition"])
+
+    @override_settings(EXPORT_CSV_SERVICE_ENABLED=True, EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={})
+    def test_global_enable_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("reports.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=False,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"inventory_aging": True},
+    )
+    def test_explicit_inventory_aging_override_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("reports.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=True,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"inventory_aging": False},
+    )
+    def test_explicit_inventory_aging_false_override_still_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("reports.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Slow / Dead Stock CSV exports
+# ---------------------------------------------------------------------------
+
+@override_settings(**RATELIMIT_OFF)
+class SlowDeadStockExportTests(ExportTestMixin, APITestCase):
+    def setUp(self):
+        self._setup_users_and_orgs()
+        master = MasterItem.objects.create(name="Slow Widget", sku="SLOW-001")
+        self.item = OrgItem.objects.for_org(self.org).create(
+            organization=self.org, master_item=master, name="Slow Widget"
+        )
+        BranchItem.objects.create(branch=self.branch, org_item=self.item, is_active=True)
+        StockOnHand.objects.create(
+            organization=self.org, branch=self.branch, item=self.item, quantity=10
+        )
+        InventoryCostState.objects.create(
+            organization=self.org,
+            branch=self.branch,
+            item=self.item,
+            latest_unit_cost=Decimal("5.00"),
+            last_receipt_at=timezone.now() - timedelta(days=120),
+        )
+
+    def _url(self):
+        return f"/api/orgs/{self.org.id}/reports/slow-dead-stock/export/csv/"
+
+    def test_owner_can_export(self):
+        self._auth(self.owner)
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("slow-dead-stock-", response["Content-Disposition"])
+
+    @override_settings(EXPORT_CSV_SERVICE_ENABLED=True, EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={})
+    def test_global_enable_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("reports.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=False,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"slow_dead_stock": True},
+    )
+    def test_explicit_slow_dead_stock_override_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("reports.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
+    @override_settings(
+        EXPORT_CSV_SERVICE_ENABLED=True,
+        EXPORT_CSV_SERVICE_ENDPOINT_OVERRIDES={"slow_dead_stock": False},
+    )
+    def test_explicit_slow_dead_stock_false_override_still_uses_service_path(self):
+        self._auth(self.owner)
+        with patch("reports.views.ExportService.export_stream") as export_stream:
+            export_stream.return_value = HttpResponse("ok", content_type="text/csv")
+            response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        export_stream.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # Rate limit tests
@@ -650,5 +953,4 @@ class StreamingHelpersTests(TestCase):
     def test_csv_filename_format(self):
         from exports.filenames import csv_filename
         name = csv_filename("purchase-orders")
-        import re
         self.assertRegex(name, r"^purchase-orders-\d{4}-\d{2}-\d{2}\.csv$")

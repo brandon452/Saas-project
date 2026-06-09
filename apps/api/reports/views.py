@@ -2,8 +2,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models
-from django.db.models import Case, Count, DecimalField, ExpressionWrapper, F, IntegerField, OuterRef, Subquery, Sum, Value, When
-from django.db.models.functions import Coalesce
+from django.db.models import Case, Count, DecimalField, ExpressionWrapper, F, IntegerField, Sum, Value, When
 from django.utils import timezone
 from django_ratelimit.core import is_ratelimited
 from rest_framework.exceptions import NotFound, ValidationError
@@ -13,20 +12,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from branches.models import Branch
-from exports.audit import log_export_event
-from exports.config import get_csv_rate
-from exports.filenames import csv_filename
 from exports.rows.inventory_aging import AGING_HEADERS, to_aging_csv_row
 from exports.rows.slow_dead_stock import SLOW_DEAD_HEADERS, to_slow_dead_csv_row
 from exports.rows.stock_valuation import HEADERS, to_row as valuation_to_csv_row
-from exports.streaming import enforce_row_cap, stream_csv
+from exports.service import ExportConfig, ExportService
 from goods_receipts.models import GoodsReceiptLine
 from inventory.models import (
-    InventoryClosePeriod,
-    InventoryCloseSnapshot,
-    InventoryCostState,
     OrgItem,
-    StockOnHand,
 )
 from inventory.services import get_org_local_today
 from suppliers.models import Supplier
@@ -204,12 +196,6 @@ class StockValuationExportView(APIView):
         super().initial(request, *args, **kwargs)
 
     def get(self, request, org_id=None, *args, **kwargs):
-        if is_ratelimited(request, group="valuation_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
-            return Response(
-                {"detail": "Too many export requests. Please wait before exporting again."},
-                status=429,
-            )
-
         period_id = request.query_params.get("period_id")
         if period_id:
             period = resolve_period(period_id, request.org)
@@ -219,22 +205,26 @@ class StockValuationExportView(APIView):
             qs = live_queryset(request)
             row_fn = soh_to_row
 
-        row_count = enforce_row_cap(qs)
-
-        log_export_event(
-            organization=request.org,
-            actor_user=request.user,
-            resource="stock_valuation",
-            format="csv",
-            filters=dict(request.query_params),
-            row_count=row_count,
-        )
-
         def _iter_rows():
             for obj in qs.iterator(chunk_size=500):
                 yield valuation_to_csv_row(format_row(row_fn(obj)))
 
-        return stream_csv(HEADERS, _iter_rows(), csv_filename("stock-valuation"))
+        config = ExportConfig(
+            headers=HEADERS,
+            filename_prefix="stock-valuation",
+            rate_group="valuation_export_csv",
+            audit_resource="stock_valuation",
+            filters_provider=lambda req: dict(req.query_params),
+            require_ordering=True,
+        )
+        return ExportService.export_stream(
+            request=request,
+            queryset=qs,
+            config=config,
+            row_iter=_iter_rows(),
+            organization=request.org,
+            rate_limiter=is_ratelimited,
+        )
 
 
 class PurchaseCostTrendView(APIView):
@@ -486,31 +476,30 @@ class InventoryAgingView(_OrgReportMixin, APIView):
 class InventoryAgingExportView(_OrgReportMixin, APIView):
 
     def get(self, request, org_id=None, *args, **kwargs):
-        if is_ratelimited(request, group="aging_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
-            return Response(
-                {"detail": "Too many export requests. Please wait before exporting again."},
-                status=429,
-            )
-
         today_local = get_org_local_today(request.org)
         org_tz = _get_org_tz(request.org)
         qs = aging_queryset(request)
-        row_count = enforce_row_cap(qs)
-
-        log_export_event(
-            organization=request.org,
-            actor_user=request.user,
-            resource="inventory_aging",
-            format="csv",
-            filters=dict(request.query_params),
-            row_count=row_count,
-        )
 
         def _iter_rows():
             for obj in qs.iterator(chunk_size=500):
                 yield to_aging_csv_row(aging_to_row(obj, today_local, org_tz))
 
-        return stream_csv(AGING_HEADERS, _iter_rows(), csv_filename("inventory-aging"))
+        config = ExportConfig(
+            headers=AGING_HEADERS,
+            filename_prefix="inventory-aging",
+            rate_group="aging_export_csv",
+            audit_resource="inventory_aging",
+            filters_provider=lambda req: dict(req.query_params),
+            require_ordering=True,
+        )
+        return ExportService.export_stream(
+            request=request,
+            queryset=qs,
+            config=config,
+            row_iter=_iter_rows(),
+            organization=request.org,
+            rate_limiter=is_ratelimited,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -622,28 +611,27 @@ class SlowDeadStockView(_OrgReportMixin, APIView):
 class SlowDeadStockExportView(_OrgReportMixin, APIView):
 
     def get(self, request, org_id=None, *args, **kwargs):
-        if is_ratelimited(request, group="slow_dead_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
-            return Response(
-                {"detail": "Too many export requests. Please wait before exporting again."},
-                status=429,
-            )
-
         today_local = get_org_local_today(request.org)
         org_tz = _get_org_tz(request.org)
         qs = slow_dead_queryset(request)
-        row_count = enforce_row_cap(qs)
-
-        log_export_event(
-            organization=request.org,
-            actor_user=request.user,
-            resource="slow_dead_stock",
-            format="csv",
-            filters=dict(request.query_params),
-            row_count=row_count,
-        )
 
         def _iter_rows():
             for obj in qs.iterator(chunk_size=500):
                 yield to_slow_dead_csv_row(slow_dead_to_row(obj, today_local, org_tz))
 
-        return stream_csv(SLOW_DEAD_HEADERS, _iter_rows(), csv_filename("slow-dead-stock"))
+        config = ExportConfig(
+            headers=SLOW_DEAD_HEADERS,
+            filename_prefix="slow-dead-stock",
+            rate_group="slow_dead_export_csv",
+            audit_resource="slow_dead_stock",
+            filters_provider=lambda req: dict(req.query_params),
+            require_ordering=True,
+        )
+        return ExportService.export_stream(
+            request=request,
+            queryset=qs,
+            config=config,
+            row_iter=_iter_rows(),
+            organization=request.org,
+            rate_limiter=is_ratelimited,
+        )

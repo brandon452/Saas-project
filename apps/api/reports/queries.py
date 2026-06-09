@@ -106,7 +106,7 @@ def live_queryset(request):
             F("quantity") * Coalesce(F("_latest_unit_cost"), Value(Decimal("0"))),
             output_field=DecimalField(max_digits=30, decimal_places=4),
         ),
-    ).order_by("_has_latest", F("_sort_val").desc())
+    ).order_by("_has_latest", F("_sort_val").desc(), "pk")
 
     return soh_qs
 
@@ -142,7 +142,7 @@ def snapshot_queryset(request, period):
             F("quantity_on_hand") * Coalesce(F("latest_unit_cost"), Value(Decimal("0"))),
             output_field=DecimalField(max_digits=30, decimal_places=4),
         ),
-    ).order_by("_has_latest", F("_sort_val").desc())
+    ).order_by("_has_latest", F("_sort_val").desc(), "pk")
 
     return qs
 
@@ -265,6 +265,7 @@ def aging_queryset(request):
         F("_last_receipt_at").asc(nulls_last=True),
         "item__master_item__name",
         "branch__name",
+        "pk",
     )
 
     return soh_qs
@@ -406,7 +407,7 @@ def slow_dead_queryset(request):
         )
 
     # Sort oldest effective_ts first (= highest inactive_days first), then deterministic.
-    soh_qs = soh_qs.order_by("_effective_ts", "item__master_item__name", "branch__name")
+    soh_qs = soh_qs.order_by("_effective_ts", "item__master_item__name", "branch__name", "pk")
 
     return soh_qs
 

@@ -12,11 +12,8 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
-from exports.audit import log_export_event
-from exports.config import get_csv_rate
-from exports.filenames import csv_filename
 from exports.rows.goods_receipts import HEADERS, to_row
-from exports.streaming import enforce_row_cap, stream_csv
+from exports.service import ExportConfig, ExportService
 from tenancy.mixins import OrgScopedViewSetMixin
 from tenancy.permissions import IsOrgOperationalUser, RolePolicyMixin, RolePolicyPermission
 
@@ -102,8 +99,8 @@ class GoodsReceiptViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
         if request.data.get("receipt_type") == GoodsReceipt.DIRECT_RECEIPT:
             branch_id = request.data.get("branch")
             if branch_id:
-                from branches.models import Branch
-                branch = Branch.objects.filter(pk=branch_id, organization=request.org).first()
+                from branches.api import get_branch_for_org_or_none
+                branch = get_branch_for_org_or_none(branch_id=branch_id, organization=request.org)
                 serializer_context["branch"] = branch
 
         serializer = self.get_serializer(data=request.data, context=serializer_context)
@@ -131,22 +128,27 @@ class GoodsReceiptViewSet(RolePolicyMixin, OrgScopedViewSetMixin, ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="export/csv")
     def export_csv(self, request, *args, **kwargs):
-        if is_ratelimited(request, group="gr_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
-            return Response(
-                {"detail": "Too many export requests. Please wait before exporting again."},
-                status=status.HTTP_429_TOO_MANY_REQUESTS,
-            )
-        qs = self.get_queryset().select_related("branch", "supplier", "purchase_order", "purchase_order__supplier")
-        row_count = enforce_row_cap(qs)
-        log_export_event(
-            organization=request.org,
-            actor_user=request.user,
-            resource="goods_receipt",
-            format="csv",
-            filters=dict(request.query_params),
-            row_count=row_count,
+        qs = (
+            self.get_queryset()
+            .select_related("branch", "supplier", "purchase_order", "purchase_order__supplier")
+            .order_by("-received_at", "pk")
         )
-        return stream_csv(HEADERS, (to_row(gr) for gr in qs.iterator(chunk_size=500)), csv_filename("goods-receipts"))
+        config = ExportConfig(
+            headers=HEADERS,
+            filename_prefix="goods-receipts",
+            rate_group="gr_export_csv",
+            audit_resource="goods_receipt",
+            filters_provider=lambda req: dict(req.query_params),
+            require_ordering=True,
+        )
+        return ExportService.export_stream(
+            request=request,
+            queryset=qs,
+            config=config,
+            row_iter=(to_row(gr) for gr in qs.iterator(chunk_size=500)),
+            organization=request.org,
+            rate_limiter=is_ratelimited,
+        )
 
     @transaction.atomic
     def perform_create(self, serializer):

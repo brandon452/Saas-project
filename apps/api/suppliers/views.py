@@ -7,11 +7,8 @@ from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
 from audit.services import changed_field_diff, log_audit_event
-from exports.audit import log_export_event
-from exports.config import get_csv_rate
-from exports.filenames import csv_filename
 from exports.rows.suppliers import HEADERS, to_row
-from exports.streaming import enforce_row_cap, stream_csv
+from exports.service import ExportConfig, ExportService
 from tenancy.mixins import OrgScopedViewSetMixin
 from tenancy.models import Organization
 from tenancy.permissions import RolePolicyMixin, get_org_membership, get_parent_membership
@@ -169,22 +166,23 @@ class SupplierViewSet(
 
     @action(detail=False, methods=["get"], url_path="export/csv")
     def export_csv(self, request, *args, **kwargs):
-        if is_ratelimited(request, group="supplier_export_csv", key="user", rate=get_csv_rate(), method="GET", increment=True):
-            return Response(
-                {"detail": "Too many export requests. Please wait before exporting again."},
-                status=status.HTTP_429_TOO_MANY_REQUESTS,
-            )
-        qs = self.get_queryset()
-        row_count = enforce_row_cap(qs)
-        log_export_event(
-            organization=request.org,
-            actor_user=request.user,
-            resource="supplier",
-            format="csv",
-            filters=dict(request.query_params),
-            row_count=row_count,
+        qs = self.get_queryset().order_by("display_name", "pk")
+        config = ExportConfig(
+            headers=HEADERS,
+            filename_prefix="suppliers",
+            rate_group="supplier_export_csv",
+            audit_resource="supplier",
+            filters_provider=lambda req: dict(req.query_params),
+            require_ordering=True,
         )
-        return stream_csv(HEADERS, (to_row(s) for s in qs.iterator(chunk_size=500)), csv_filename("suppliers"))
+        return ExportService.export_stream(
+            request=request,
+            queryset=qs,
+            config=config,
+            row_iter=(to_row(s) for s in qs.iterator(chunk_size=500)),
+            organization=request.org,
+            rate_limiter=is_ratelimited,
+        )
 
     @action(detail=True, methods=["patch"], url_path="deactivate")
     def deactivate(self, request, *args, **kwargs):
